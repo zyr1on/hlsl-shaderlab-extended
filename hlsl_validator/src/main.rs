@@ -68,11 +68,28 @@ pub fn is_inside_properties_block(doc: &str, target_line: usize) -> bool {
 pub static SHADERLAB_PROPERTY_ATTRIBUTES: &[(&str, &str)] = &[
     ("[HDR]", "Marks a Color or Texture property as High Dynamic Range"),
     ("[HideInInspector]", "Hides property from the default Material Inspector"),
+    ("[PerRendererData]", "Marks property (e.g. _MainTex) as driven per SpriteRenderer or CanvasRenderer (2D)"),
+    ("[MaterialToggle]", "Displays a boolean checkbox toggle in the Material Inspector (used for 2D PixelSnap)"),
     ("[Toggle]", "Displays a boolean checkbox toggle in the Material Inspector"),
+    ("[MainColor]", "Marks property as main material color"),
+    ("[MainTexture]", "Marks property as main material texture"),
     ("[Normal]", "Validates that assigned texture is marked as Normal Map"),
     ("[NoScaleOffset]", "Hides the Tiling and Offset fields for texture property"),
     ("[IntRange]", "Restricts slider steps to integer values only"),
 ];
+
+pub fn is_unity_2d_context(uri: &str, content: &str) -> bool {
+    content.contains("Universal2D")
+        || content.contains("CanUseSpriteAtlas")
+        || content.contains("PreviewType\"=\"Plane")
+        || content.contains("UnityPixelSnap")
+        || content.contains("[PerRendererData]")
+        || content.contains("Sprite")
+        || content.contains("UnityGet2DClipping")
+        || uri.contains("Sprite")
+        || uri.contains("2D")
+        || uri.contains("UI")
+}
 
 const UNITY_COMPAT_PREAMBLE: &str = r#"
 #ifndef __UNITY_BUILTIN_STUBS__
@@ -85,23 +102,87 @@ const UNITY_COMPAT_PREAMBLE: &str = r#"
 #define half3 float3
 #define half2 float2
 #define half float
+
+// Texture sampling macros
 struct UnitySampler2D { Texture2D t; SamplerState s; };
 #define sampler2D UnitySampler2D
 #define tex2D(tex, uv) (tex.t.Sample(tex.s, uv))
 #define tex2Dlod(tex, uv) (tex.t.SampleLevel(tex.s, (uv).xy, (uv).w))
 #define TRANSFORM_TEX(tex,name) ((tex.xy) * name##_ST.xy + name##_ST.zw)
-float4x4 UNITY_MATRIX_MVP;
-float4x4 unity_ObjectToWorld;
-float4x4 unity_WorldToObject;
-inline float4 UnityObjectToClipPos(float3 pos) { return mul(UNITY_MATRIX_MVP, float4(pos, 1.0)); }
-inline float4 UnityObjectToClipPos(float4 pos) { return mul(UNITY_MATRIX_MVP, pos); }
-inline float3 UnityObjectToWorldNormal(float3 norm) { return mul((float3x3)unity_WorldToObject, norm); }
-inline float3 UnityObjectToWorldDir(float3 dir) { return mul((float3x3)unity_ObjectToWorld, dir); }
+
 #define TEXTURE2D(name) Texture2D name
 #define SAMPLER(name) SamplerState name
 #define SAMPLE_TEXTURE2D(name, samplerName, coord2) name.Sample(samplerName, coord2)
+
+// Global Unity Matrices (3D & 2D)
+float4x4 UNITY_MATRIX_MVP;
+float4x4 UNITY_MATRIX_MV;
+float4x4 UNITY_MATRIX_V;
+float4x4 UNITY_MATRIX_P;
+float4x4 UNITY_MATRIX_VP;
+float4x4 unity_ObjectToWorld;
+float4x4 unity_WorldToObject;
+
+// Global Unity Parameters (Time, Screen, Fog, Camera)
+float4 _Time;
+float4 _SinTime;
+float4 _CosTime;
+float4 unity_DeltaTime;
+float4 _ScreenParams;
+float4 _ZBufferParams;
+float3 _WorldSpaceCameraPos;
+float4 _WorldSpaceLightPos0;
+float4 _LightColor0;
+
+// Unity 2D Sprite & UI Specific Uniforms
+float4 _RendererColor;
+float4 _Flip;
+float4 _ClipRect;
+
+// Unity 2D Pixel Snapping (Pixel-perfect 2D Sprites)
+inline float4 UnityPixelSnap(float4 pos) {
+    float2 hpc = _ScreenParams.xy * 0.5;
+    float2 temp = floor(pos.xy / pos.w * hpc + 0.5) / hpc;
+    pos.xy = temp * pos.w;
+    return pos;
+}
+
+// Unity 2D UI Canvas Rect Clipping
+inline float UnityGet2DClipping(float2 position, float4 clipRect) {
+    float2 inside = step(clipRect.xy, position.xy) * step(position.xy, clipRect.zw);
+    return inside.x * inside.y;
+}
+
+// Coordinate Transforms (Built-in Pipeline)
+inline float4 UnityObjectToClipPos(float3 pos) { return mul(UNITY_MATRIX_MVP, float4(pos, 1.0)); }
+inline float4 UnityObjectToClipPos(float4 pos) { return mul(UNITY_MATRIX_MVP, pos); }
+inline float4 UnityWorldToClipPos(float3 pos) { return mul(UNITY_MATRIX_VP, float4(pos, 1.0)); }
+inline float3 UnityObjectToViewPos(float3 pos) { return mul(UNITY_MATRIX_MV, float4(pos, 1.0)).xyz; }
+inline float3 UnityObjectToWorldNormal(float3 norm) { return mul((float3x3)unity_WorldToObject, norm); }
+inline float3 UnityObjectToWorldDir(float3 dir) { return mul((float3x3)unity_ObjectToWorld, dir); }
+inline float3 UnityWorldSpaceViewDir(float3 worldPos) { return _WorldSpaceCameraPos - worldPos; }
+
+// Coordinate Transforms (Universal Render Pipeline - URP 2D & 3D)
 inline float4 TransformObjectToHClip(float3 pos) { return mul(UNITY_MATRIX_MVP, float4(pos, 1.0)); }
 inline float4 TransformObjectToHClip(float4 pos) { return mul(UNITY_MATRIX_MVP, pos); }
+inline float3 TransformObjectToWorld(float3 posOS) { return mul(unity_ObjectToWorld, float4(posOS, 1.0)).xyz; }
+inline float3 TransformWorldToObject(float3 posWS) { return mul(unity_WorldToObject, float4(posWS, 1.0)).xyz; }
+inline float4 TransformWorldToHClip(float3 posWS) { return mul(UNITY_MATRIX_VP, float4(posWS, 1.0)); }
+
+// URP 2D Lighting Structs
+struct SurfaceData2D {
+    half4 albedo;
+    half3 normalTS;
+    half4 mask;
+};
+
+// Unity Instancing & Multi-compile stubs
+#define UNITY_VERTEX_INPUT_INSTANCE_ID
+#define UNITY_VERTEX_OUTPUT_STEREO
+#define UNITY_SETUP_INSTANCE_ID(v)
+#define UNITY_TRANSFER_INSTANCE_ID(v, o)
+#define UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o)
+#define UNITY_ACCESS_INSTANCED_PROP(arr, var) var
 #endif
 "#;
 
@@ -577,8 +658,9 @@ fn handle_completion(
                 return json!(sl_items);
             }
 
-            // 2. Standard Property Templates
-            let prop_templates = [
+            // 2. Standard Property Templates (2D & 3D Aware)
+            let is_2d = is_unity_2d_context(uri, doc);
+            let mut prop_templates = vec![
                 ("_MainTex", "_MainTex (\"Texture\", 2D) = \"white\" {}", "Albedo 2D Texture slot"),
                 ("_Color", "_Color (\"Color\", Color) = (1, 1, 1, 1)", "Main RGBA Color property"),
                 ("_Glossiness", "_Glossiness (\"Smoothness\", Range(0, 1)) = 0.5", "Smoothness slider property"),
@@ -587,6 +669,21 @@ fn handle_completion(
                 ("_EmissionColor", "_EmissionColor (\"Emission\", Color) = (0, 0, 0, 1)", "HDR emission color"),
                 ("_Vector", "_Vector (\"Vector\", Vector) = (0, 0, 0, 0)", "4D Vector property"),
             ];
+            let sprite_props = [
+                ("[PerRendererData] _MainTex", "[PerRendererData] _MainTex (\"Sprite Texture\", 2D) = \"white\" {}", "Sprite texture slot (driven per SpriteRenderer - 2D)"),
+                ("PixelSnap", "[MaterialToggle] PixelSnap (\"Pixel snap\", Float) = 0", "Pixel-perfect snapping toggle for 2D sprites"),
+                ("_RendererColor", "[HideInInspector] _RendererColor (\"RendererColor\", Color) = (1, 1, 1, 1)", "SpriteRenderer per-instance vertex color (2D)"),
+                ("_Flip", "[HideInInspector] _Flip (\"Flip\", Vector) = (1, 1, 1, 1)", "SpriteRenderer flipping vector (2D)"),
+                ("_ClipRect", "_ClipRect (\"Clip Rect\", Vector) = (-32767, -32767, 32767, 32767)", "Unity UI Canvas 2D Rect clipping bounds"),
+            ];
+            if is_2d {
+                for (i, p) in sprite_props.iter().enumerate() {
+                    prop_templates.insert(i, *p);
+                }
+            } else {
+                prop_templates.extend_from_slice(&sprite_props);
+            }
+
             for (idx, (label, snip, desc)) in prop_templates.iter().enumerate() {
                 sl_items.push(json!({
                     "label": *label,
@@ -691,20 +788,28 @@ fn handle_completion(
             }));
         }
 
+        let is_2d = is_unity_2d_context(uri, doc);
         let sl_snippets = [
-            ("shader", "Unity ShaderLab Shader template", "Shader \"$1\"\n{\n    Properties\n    {\n        _MainTex (\"Texture\", 2D) = \"white\" {}\n    }\n    SubShader\n    {\n        Tags { \"RenderType\"=\"Opaque\" \"RenderPipeline\"=\"UniversalPipeline\" }\n        Pass\n        {\n            HLSLPROGRAM\n            #pragma vertex vert\n            #pragma fragment frag\n            $0\n            ENDHLSL\n        }\n    }\n}"),
+            ("shader", "Unity ShaderLab 3D Shader template", "Shader \"$1\"\n{\n    Properties\n    {\n        _MainTex (\"Texture\", 2D) = \"white\" {}\n    }\n    SubShader\n    {\n        Tags { \"RenderType\"=\"Opaque\" \"RenderPipeline\"=\"UniversalPipeline\" }\n        Pass\n        {\n            HLSLPROGRAM\n            #pragma vertex vert\n            #pragma fragment frag\n            $0\n            ENDHLSL\n        }\n    }\n}"),
+            ("sprite", "Unity 2D Sprite Shader template", "Shader \"Sprites/${1:CustomSprite}\"\n{\n    Properties\n    {\n        [PerRendererData] _MainTex (\"Sprite Texture\", 2D) = \"white\" {}\n        _Color (\"Tint\", Color) = (1,1,1,1)\n        [MaterialToggle] PixelSnap (\"Pixel snap\", Float) = 0\n        [HideInInspector] _RendererColor (\"RendererColor\", Color) = (1,1,1,1)\n        [HideInInspector] _Flip (\"Flip\", Vector) = (1,1,1,1)\n    }\n    SubShader\n    {\n        Tags\n        {\n            \"Queue\"=\"Transparent\"\n            \"IgnoreProjector\"=\"True\"\n            \"RenderType\"=\"Transparent\"\n            \"PreviewType\"=\"Plane\"\n            \"CanUseSpriteAtlas\"=\"True\"\n        }\n        Cull Off\n        Lighting Off\n        ZWrite Off\n        Blend One OneMinusSrcAlpha\n        Pass\n        {\n            CGPROGRAM\n            #pragma vertex vert\n            #pragma fragment frag\n            #pragma multi_compile _ PIXELSNAP_ON\n            #include \"UnityCG.cginc\"\n\n            struct appdata_t\n            {\n                float4 vertex   : POSITION;\n                float4 color    : COLOR;\n                float2 texcoord : TEXCOORD0;\n            };\n\n            struct v2f\n            {\n                float4 vertex   : SV_POSITION;\n                fixed4 color    : COLOR;\n                float2 texcoord : TEXCOORD0;\n            };\n\n            sampler2D _MainTex;\n            fixed4 _Color;\n            fixed4 _RendererColor;\n            float4 _Flip;\n\n            v2f vert(appdata_t IN)\n            {\n                v2f OUT;\n                IN.vertex.xy *= _Flip.xy;\n                OUT.vertex = UnityObjectToClipPos(IN.vertex);\n                OUT.texcoord = IN.texcoord;\n                OUT.color = IN.color * _Color * _RendererColor;\n                #ifdef PIXELSNAP_ON\n                OUT.vertex = UnityPixelSnap(OUT.vertex);\n                #endif\n                return OUT;\n            }\n\n            fixed4 frag(v2f IN) : SV_Target\n            {\n                fixed4 c = tex2D(_MainTex, IN.texcoord) * IN.color;\n                c.rgb *= c.a;\n                return c;\n            }\n            ENDCG\n        }\n    }\n}"),
+            ("ui", "Unity UI (Canvas 2D) Shader template", "Shader \"UI/${1:CustomUI}\"\n{\n    Properties\n    {\n        [PerRendererData] _MainTex (\"Sprite Texture\", 2D) = \"white\" {}\n        _Color (\"Tint\", Color) = (1,1,1,1)\n        _ClipRect (\"Clip Rect\", Vector) = (-32767, -32767, 32767, 32767)\n        _ColorMask (\"Color Mask\", Float) = 15\n    }\n    SubShader\n    {\n        Tags\n        {\n            \"Queue\"=\"Transparent\"\n            \"IgnoreProjector\"=\"True\"\n            \"RenderType\"=\"Transparent\"\n            \"PreviewType\"=\"Plane\"\n            \"CanUseSpriteAtlas\"=\"True\"\n        }\n        Cull Off\n        Lighting Off\n        ZWrite Off\n        Blend SrcAlpha OneMinusSrcAlpha\n        ColorMask [_ColorMask]\n        Pass\n        {\n            CGPROGRAM\n            #pragma vertex vert\n            #pragma fragment frag\n            #include \"UnityCG.cginc\"\n\n            struct appdata_t\n            {\n                float4 vertex   : POSITION;\n                float4 color    : COLOR;\n                float2 texcoord : TEXCOORD0;\n            };\n\n            struct v2f\n            {\n                float4 vertex   : SV_POSITION;\n                fixed4 color    : COLOR;\n                float2 texcoord : TEXCOORD0;\n                float4 worldPosition : TEXCOORD1;\n            };\n\n            sampler2D _MainTex;\n            fixed4 _Color;\n            float4 _ClipRect;\n\n            v2f vert(appdata_t v)\n            {\n                v2f OUT;\n                OUT.worldPosition = v.vertex;\n                OUT.vertex = UnityObjectToClipPos(OUT.worldPosition);\n                OUT.texcoord = v.texcoord;\n                OUT.color = v.color * _Color;\n                return OUT;\n            }\n\n            fixed4 frag(v2f IN) : SV_Target\n            {\n                half4 color = tex2D(_MainTex, IN.texcoord) * IN.color;\n                color.a *= UnityGet2DClipping(IN.worldPosition.xy, _ClipRect);\n                return color;\n            }\n            ENDCG\n        }\n    }\n}"),
             ("pass", "Unity ShaderLab Pass block", "Pass\n{\n    Name \"$1\"\n    HLSLPROGRAM\n    #pragma vertex vert\n    #pragma fragment frag\n    $0\n    ENDHLSL\n}"),
             ("properties", "Properties block", "Properties\n{\n    $0\n}"),
             ("subshader", "SubShader block", "SubShader\n{\n    $0\n}"),
         ];
         for (idx, (label, detail, snip)) in sl_snippets.iter().enumerate() {
+            let sort_prefix = if is_2d && (*label == "sprite" || *label == "ui") {
+                "25"
+            } else {
+                "30"
+            };
             sl_items.push(json!({
                 "label": *label,
                 "kind": 15,
                 "detail": *detail,
                 "insertText": *snip,
                 "insertTextFormat": 2,
-                "sortText": format!("30_{:02}_{}", idx, label),
+                "sortText": format!("{}_{:02}_{}", sort_prefix, idx, label),
             }));
         }
 
@@ -1633,6 +1738,163 @@ Shader "Unlit/TestUnlit"
     }
 
     #[test]
+    fn test_validate_unity_2d_sprite_shader() {
+        let dxc = find_dxc_path();
+        let sprite_shader = r#"
+Shader "Sprites/Custom2DSprite"
+{
+    Properties
+    {
+        [PerRendererData] _MainTex ("Sprite Texture", 2D) = "white" {}
+        _Color ("Tint", Color) = (1,1,1,1)
+        [MaterialToggle] PixelSnap ("Pixel snap", Float) = 0
+        [HideInInspector] _RendererColor ("RendererColor", Color) = (1,1,1,1)
+        [HideInInspector] _Flip ("Flip", Vector) = (1,1,1,1)
+    }
+    SubShader
+    {
+        Tags
+        {
+            "Queue"="Transparent"
+            "IgnoreProjector"="True"
+            "RenderType"="Transparent"
+            "PreviewType"="Plane"
+            "CanUseSpriteAtlas"="True"
+        }
+        Cull Off
+        Lighting Off
+        ZWrite Off
+        Blend One OneMinusSrcAlpha
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "UnityCG.cginc"
+
+            struct appdata_t
+            {
+                float4 vertex   : POSITION;
+                float4 color    : COLOR;
+                float2 texcoord : TEXCOORD0;
+            };
+
+            struct v2f
+            {
+                float4 vertex   : SV_POSITION;
+                fixed4 color    : COLOR;
+                float2 texcoord : TEXCOORD0;
+            };
+
+            sampler2D _MainTex;
+            fixed4 _Color;
+            fixed4 _RendererColor;
+            float4 _Flip;
+
+            v2f vert(appdata_t IN)
+            {
+                v2f OUT;
+                IN.vertex.xy *= _Flip.xy;
+                OUT.vertex = UnityObjectToClipPos(IN.vertex);
+                OUT.texcoord = IN.texcoord;
+                OUT.color = IN.color * _Color * _RendererColor;
+                OUT.vertex = UnityPixelSnap(OUT.vertex);
+                return OUT;
+            }
+
+            fixed4 frag(v2f IN) : SV_Target
+            {
+                fixed4 c = tex2D(_MainTex, IN.texcoord) * IN.color;
+                c.rgb *= c.a;
+                return c;
+            }
+            ENDCG
+        }
+    }
+}
+"#;
+        let diags = validate_shader("file:///Assets/Sprites/Custom2DSprite.shader", sprite_shader, &dxc, None);
+        assert!(diags.is_empty(), "Unity 2D Sprite shader MUST validate with 0 errors, got: {:?}", diags);
+    }
+
+    #[test]
+    fn test_validate_unity_2d_ui_shader() {
+        let dxc = find_dxc_path();
+        let ui_shader = r#"
+Shader "UI/Custom2DUI"
+{
+    Properties
+    {
+        [PerRendererData] _MainTex ("Sprite Texture", 2D) = "white" {}
+        _Color ("Tint", Color) = (1,1,1,1)
+        _ClipRect ("Clip Rect", Vector) = (-32767, -32767, 32767, 32767)
+    }
+    SubShader
+    {
+        Tags
+        {
+            "Queue"="Transparent"
+            "IgnoreProjector"="True"
+            "RenderType"="Transparent"
+            "PreviewType"="Plane"
+            "CanUseSpriteAtlas"="True"
+        }
+        Cull Off
+        Lighting Off
+        ZWrite Off
+        Blend SrcAlpha OneMinusSrcAlpha
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "UnityCG.cginc"
+
+            struct appdata_t
+            {
+                float4 vertex   : POSITION;
+                float4 color    : COLOR;
+                float2 texcoord : TEXCOORD0;
+            };
+
+            struct v2f
+            {
+                float4 vertex   : SV_POSITION;
+                fixed4 color    : COLOR;
+                float2 texcoord : TEXCOORD0;
+                float4 worldPosition : TEXCOORD1;
+            };
+
+            sampler2D _MainTex;
+            fixed4 _Color;
+            float4 _ClipRect;
+
+            v2f vert(appdata_t v)
+            {
+                v2f OUT;
+                OUT.worldPosition = v.vertex;
+                OUT.vertex = UnityObjectToClipPos(OUT.worldPosition);
+                OUT.texcoord = v.texcoord;
+                OUT.color = v.color * _Color;
+                return OUT;
+            }
+
+            fixed4 frag(v2f IN) : SV_Target
+            {
+                half4 color = tex2D(_MainTex, IN.texcoord) * IN.color;
+                color.a *= UnityGet2DClipping(IN.worldPosition.xy, _ClipRect);
+                return color;
+            }
+            ENDCG
+        }
+    }
+}
+"#;
+        let diags = validate_shader("file:///Assets/UI/Custom2DUI.shader", ui_shader, &dxc, None);
+        assert!(diags.is_empty(), "Unity 2D UI Canvas shader MUST validate with 0 errors, got: {:?}", diags);
+    }
+
+    #[test]
     fn test_validate_unreal_shader() {
         let dxc = find_dxc_path();
         let unreal_shader = r#"
@@ -1667,7 +1929,16 @@ float3 CustomUnrealLighting(float3 WorldPos, float3 WorldNormal, float3 LightDir
             assert!(diags.is_empty(), "Sample Unity Unlit shader MUST have 0 errors, got: {:?}", diags);
         }
 
-        // 3. Unreal Engine USF Sample
+        // 3. Unity 2D Sprite Sample
+        if let Ok(sprite_code) = std::fs::read_to_string("../samples/unity_sprite.shader") {
+            let context = detect_shader_context("file:///unity_sprite.shader", &sprite_code);
+            assert_eq!(context, ShaderContext::UnityShaderLab);
+            assert!(is_unity_2d_context("file:///unity_sprite.shader", &sprite_code));
+            let diags = validate_shader("file:///unity_sprite.shader", &sprite_code, &dxc, None);
+            assert!(diags.is_empty(), "Sample Unity 2D Sprite shader MUST have 0 errors, got: {:?}", diags);
+        }
+
+        // 4. Unreal Engine USF Sample
         if let Ok(unreal_code) = std::fs::read_to_string("../samples/unreal_sample.usf") {
             let context = detect_shader_context("file:///unreal_sample.usf", &unreal_code);
             assert_eq!(context, ShaderContext::UnrealEngine);

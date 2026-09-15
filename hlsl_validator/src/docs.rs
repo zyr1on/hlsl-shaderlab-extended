@@ -609,6 +609,34 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
             BuiltinOverload { label: "float4 UnityObjectToClipPos(float4 pos)", params: &["float4 pos"] },
         ],
     },
+    BuiltinFunction {
+        name: "UnityPixelSnap",
+        description: "### `UnityPixelSnap`\n*Unity 2D Sprite Function*\n\nSnaps vertex position to screen pixel grid for pixel-perfect 2D rendering.\n\n**Parameters:**\n* `pos`: Clip-space position (`float4`).",
+        overloads: &[
+            BuiltinOverload { label: "float4 UnityPixelSnap(float4 pos)", params: &["float4 pos"] },
+        ],
+    },
+    BuiltinFunction {
+        name: "UnityGet2DClipping",
+        description: "### `UnityGet2DClipping`\n*Unity 2D UI Function*\n\nCalculates rectangular clip mask factor for 2D UI Canvas elements.\n\n**Parameters:**\n* `position`: Screen/World-space position (`float2`).\n* `clipRect`: Rectangular clip boundaries min/max (`float4`).",
+        overloads: &[
+            BuiltinOverload { label: "float UnityGet2DClipping(float2 position, float4 clipRect)", params: &["float2 position", "float4 clipRect"] },
+        ],
+    },
+    BuiltinFunction {
+        name: "UnityWorldToClipPos",
+        description: "### `UnityWorldToClipPos`\n*Unity Built-in RP*\n\nTransforms a position from World Space to Homogeneous Clip Space.\n\n**Parameters:**\n* `pos`: World-space position (`float3`).",
+        overloads: &[
+            BuiltinOverload { label: "float4 UnityWorldToClipPos(float3 pos)", params: &["float3 pos"] },
+        ],
+    },
+    BuiltinFunction {
+        name: "UnityObjectToViewPos",
+        description: "### `UnityObjectToViewPos`\n*Unity Built-in RP*\n\nTransforms a position from Object Space into View/Eye Space.\n\n**Parameters:**\n* `pos`: Object-space position (`float3`).",
+        overloads: &[
+            BuiltinOverload { label: "float3 UnityObjectToViewPos(float3 pos)", params: &["float3 pos"] },
+        ],
+    },
 
     // ------------------------------------------------------------------------
     // Extended MSDN HLSL Intrinsics (Math, Float, Bitwise)
@@ -1936,6 +1964,9 @@ pub static SHADERLAB_RENDER_STATES: &[(&str, &str, &str)] = &[
     ("ColorMask", "ColorMask RGB", "Writes to Red, Green, and Blue channels, leaving Alpha untouched"),
     ("ColorMask", "ColorMask A", "Writes only to the Alpha channel"),
     ("ColorMask", "ColorMask 0", "Disables color output entirely (useful for depth-only or stencil-only passes)"),
+    // Lighting
+    ("Lighting", "Lighting Off", "Disables fixed-function lighting (standard for 2D sprites, UI, and unlit shaders)"),
+    ("Lighting", "Lighting On", "Enables fixed-function lighting"),
 ];
 
 pub static SHADERLAB_TAGS: &[(&str, &str)] = &[
@@ -1946,10 +1977,19 @@ pub static SHADERLAB_TAGS: &[(&str, &str)] = &[
     ("\"Queue\"=\"AlphaTest\"", "Renders in AlphaTest queue (2450, cutout opaque)"),
     ("\"Queue\"=\"Transparent\"", "Renders in Transparent queue (3000, back-to-front sorted)"),
     ("\"Queue\"=\"Overlay\"", "Renders in Overlay queue (4000, HUD / lens flares)"),
+    // 2D Sprite & UI Tags
+    ("\"CanUseSpriteAtlas\"=\"True\"", "Enables sprite packing and atlas coordinate UV remapping for 2D SpriteRenderer"),
+    ("\"CanUseSpriteAtlas\"=\"False\"", "Disables sprite atlas packing"),
+    ("\"PreviewType\"=\"Plane\"", "Renders flat 2D plane in Inspector material preview (standard for 2D Sprites and UI)"),
+    ("\"PreviewType\"=\"Skybox\"", "Renders preview as a skybox sphere"),
+    ("\"IgnoreProjector\"=\"True\"", "Ignores 3D projectors (standard for transparent 2D sprites, UI, and particles)"),
+    // Render Pipeline & LightModes (3D & 2D)
     ("\"RenderPipeline\"=\"UniversalPipeline\"", "Restricts SubShader to Universal Render Pipeline (URP)"),
     ("\"RenderPipeline\"=\"HighDefinitionPipeline\"", "Restricts SubShader to High Definition Render Pipeline (HDRP)"),
-    ("\"LightMode\"=\"UniversalForward\"", "URP forward main shading pass"),
-    ("\"LightMode\"=\"UniversalGBuffer\"", "URP deferred GBuffer pass"),
+    ("\"LightMode\"=\"UniversalForward\"", "URP forward main shading pass (3D)"),
+    ("\"LightMode\"=\"UniversalGBuffer\"", "URP deferred GBuffer pass (3D)"),
+    ("\"LightMode\"=\"Universal2D\"", "URP 2D Light pass: evaluates 2D Point, Freeform, Sprite, and Global lights (2D)"),
+    ("\"LightMode\"=\"NormalsRendering\"", "URP 2D Normal Map rendering pass for dynamic 2D lighting (2D)"),
     ("\"LightMode\"=\"ShadowCaster\"", "Pass responsible for casting shadows into shadow maps"),
     ("\"LightMode\"=\"DepthOnly\"", "Pass rendering scene depth into _CameraDepthTexture"),
     ("\"LightMode\"=\"DepthNormals\"", "Pass rendering screen-space normals and depth"),
