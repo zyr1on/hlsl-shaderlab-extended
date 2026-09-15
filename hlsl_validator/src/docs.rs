@@ -936,6 +936,13 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
             BuiltinOverload { label: "uint WaveActiveSum(uint expr)", params: &["uint expr"] },
         ],
     },
+    BuiltinFunction {
+        name: "WaveActiveBallot",
+        description: "### `WaveActiveBallot`\n*HLSL Wave Intrinsic (SM 6.0+)*\n\nReturns a 4-component unsigned integer bitmask representing evaluation of `expr` for all active lanes in the wave.",
+        overloads: &[
+            BuiltinOverload { label: "uint4 WaveActiveBallot(bool expr)", params: &["bool expr"] },
+        ],
+    },
 
     // ------------------------------------------------------------------------
     // Unity Engine Extended Helpers (Lighting, Fog, Sampling)
@@ -1066,7 +1073,7 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
     },
     BuiltinFunction {
         name: "dst",
-        description: "### `dst`\n*Microsoft HLSL Intrinsic*\n\nCalculates a distance vector `(1.0, d, d^2, 1/d)` between two vectors.\n\n**Parameters:**\n* `src0`: First source vector.\n* `src1`: Second source vector.",
+        description: "### `dst`\n*Microsoft HLSL Intrinsic*\n\nCalculates a distance/attenuation vector `(1.0, src0.y * src1.y, src0.z, src1.w)` from distance terms.\n\n**Parameters:**\n* `src0`: First source vector containing `(1.0, d, d^2, _)`. \n* `src1`: Second source vector containing `(1.0, 1/d, 1/d^2, _)`. ",
         overloads: &[
             BuiltinOverload { label: "float4 dst(float4 src0, float4 src1)", params: &["float4 src0", "float4 src1"] },
         ],
@@ -1327,6 +1334,8 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
         name: "InterlockedAdd",
         description: "### `InterlockedAdd`\n*Microsoft HLSL Atomic Intrinsic*\n\nPerforms an atomic addition of `value` to destination `dest`.",
         overloads: &[
+            BuiltinOverload { label: "void InterlockedAdd(inout int dest, int value)", params: &["inout int dest", "int value"] },
+            BuiltinOverload { label: "void InterlockedAdd(inout uint dest, uint value)", params: &["inout uint dest", "uint value"] },
             BuiltinOverload { label: "void InterlockedAdd(inout int dest, int value, out int original_value)", params: &["inout int dest", "int value", "out int original_value"] },
             BuiltinOverload { label: "void InterlockedAdd(inout uint dest, uint value, out uint original_value)", params: &["inout uint dest", "uint value", "out uint original_value"] },
         ],
@@ -1335,6 +1344,8 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
         name: "InterlockedMin",
         description: "### `InterlockedMin`\n*Microsoft HLSL Atomic Intrinsic*\n\nPerforms an atomic minimum comparison and update.",
         overloads: &[
+            BuiltinOverload { label: "void InterlockedMin(inout int dest, int value)", params: &["inout int dest", "int value"] },
+            BuiltinOverload { label: "void InterlockedMin(inout uint dest, uint value)", params: &["inout uint dest", "uint value"] },
             BuiltinOverload { label: "void InterlockedMin(inout int dest, int value, out int original_value)", params: &["inout int dest", "int value", "out int original_value"] },
             BuiltinOverload { label: "void InterlockedMin(inout uint dest, uint value, out uint original_value)", params: &["inout uint dest", "uint value", "out uint original_value"] },
         ],
@@ -1343,6 +1354,8 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
         name: "InterlockedMax",
         description: "### `InterlockedMax`\n*Microsoft HLSL Atomic Intrinsic*\n\nPerforms an atomic maximum comparison and update.",
         overloads: &[
+            BuiltinOverload { label: "void InterlockedMax(inout int dest, int value)", params: &["inout int dest", "int value"] },
+            BuiltinOverload { label: "void InterlockedMax(inout uint dest, uint value)", params: &["inout uint dest", "uint value"] },
             BuiltinOverload { label: "void InterlockedMax(inout int dest, int value, out int original_value)", params: &["inout int dest", "int value", "out int original_value"] },
             BuiltinOverload { label: "void InterlockedMax(inout uint dest, uint value, out uint original_value)", params: &["inout uint dest", "uint value", "out uint original_value"] },
         ],
@@ -1351,6 +1364,8 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
         name: "InterlockedAnd",
         description: "### `InterlockedAnd`\n*Microsoft HLSL Atomic Intrinsic*\n\nPerforms an atomic bitwise AND operation.",
         overloads: &[
+            BuiltinOverload { label: "void InterlockedAnd(inout int dest, int value)", params: &["inout int dest", "int value"] },
+            BuiltinOverload { label: "void InterlockedAnd(inout uint dest, uint value)", params: &["inout uint dest", "uint value"] },
             BuiltinOverload { label: "void InterlockedAnd(inout int dest, int value, out int original_value)", params: &["inout int dest", "int value", "out int original_value"] },
             BuiltinOverload { label: "void InterlockedAnd(inout uint dest, uint value, out uint original_value)", params: &["inout uint dest", "uint value", "out uint original_value"] },
         ],
@@ -1359,6 +1374,8 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
         name: "InterlockedOr",
         description: "### `InterlockedOr`\n*Microsoft HLSL Atomic Intrinsic*\n\nPerforms an atomic bitwise OR operation.",
         overloads: &[
+            BuiltinOverload { label: "void InterlockedOr(inout int dest, int value)", params: &["inout int dest", "int value"] },
+            BuiltinOverload { label: "void InterlockedOr(inout uint dest, uint value)", params: &["inout uint dest", "uint value"] },
             BuiltinOverload { label: "void InterlockedOr(inout int dest, int value, out int original_value)", params: &["inout int dest", "int value", "out int original_value"] },
             BuiltinOverload { label: "void InterlockedOr(inout uint dest, uint value, out uint original_value)", params: &["inout uint dest", "uint value", "out uint original_value"] },
         ],
@@ -1367,6 +1384,8 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
         name: "InterlockedXor",
         description: "### `InterlockedXor`\n*Microsoft HLSL Atomic Intrinsic*\n\nPerforms an atomic bitwise XOR operation.",
         overloads: &[
+            BuiltinOverload { label: "void InterlockedXor(inout int dest, int value)", params: &["inout int dest", "int value"] },
+            BuiltinOverload { label: "void InterlockedXor(inout uint dest, uint value)", params: &["inout uint dest", "uint value"] },
             BuiltinOverload { label: "void InterlockedXor(inout int dest, int value, out int original_value)", params: &["inout int dest", "int value", "out int original_value"] },
             BuiltinOverload { label: "void InterlockedXor(inout uint dest, uint value, out uint original_value)", params: &["inout uint dest", "uint value", "out uint original_value"] },
         ],
@@ -1392,6 +1411,45 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
         description: "### `CheckAccessFullyMapped`\n*Microsoft HLSL Intrinsic (Tiled Resources)*\n\nChecks whether all bytes accessed in a tiled resource were mapped in physical memory.",
         overloads: &[
             BuiltinOverload { label: "bool CheckAccessFullyMapped(uint status)", params: &["uint status"] },
+        ],
+    },
+
+    // ------------------------------------------------------------------------
+    // DirectX Raytracing (DXR) Intrinsics (Shader Model 6.3+)
+    // ------------------------------------------------------------------------
+    BuiltinFunction {
+        name: "TraceRay",
+        description: "### `TraceRay`\n*DirectX Raytracing (DXR) Intrinsic (SM 6.3+)*\n\nInitiates a ray traversal and intersection test through an acceleration structure.",
+        overloads: &[
+            BuiltinOverload { label: "void TraceRay(RaytracingAccelerationStructure AccelerationStructure, uint RayFlags, uint InstanceInclusionMask, uint RayContributionToHitGroupIndex, uint MultiplierForGeometryContributionToHitGroupIndex, uint MissShaderIndex, RayDesc Ray, inout payload_t Payload)", params: &["RaytracingAccelerationStructure AccelerationStructure", "uint RayFlags", "uint InstanceInclusionMask", "uint RayContributionToHitGroupIndex", "uint MultiplierForGeometryContributionToHitGroupIndex", "uint MissShaderIndex", "RayDesc Ray", "inout payload_t Payload"] },
+        ],
+    },
+    BuiltinFunction {
+        name: "WorldRayOrigin",
+        description: "### `WorldRayOrigin`\n*DirectX Raytracing (DXR) Intrinsic (SM 6.3+)*\n\nReturns the origin of the current ray in world space coordinates (`float3`).",
+        overloads: &[
+            BuiltinOverload { label: "float3 WorldRayOrigin()", params: &[] },
+        ],
+    },
+    BuiltinFunction {
+        name: "WorldRayDirection",
+        description: "### `WorldRayDirection`\n*DirectX Raytracing (DXR) Intrinsic (SM 6.3+)*\n\nReturns the direction vector of the current ray in world space coordinates (`float3`).",
+        overloads: &[
+            BuiltinOverload { label: "float3 WorldRayDirection()", params: &[] },
+        ],
+    },
+    BuiltinFunction {
+        name: "RayTCurrent",
+        description: "### `RayTCurrent`\n*DirectX Raytracing (DXR) Intrinsic (SM 6.3+)*\n\nReturns the current parametric distance `t` along the ray for the closest hit found so far (`float`).",
+        overloads: &[
+            BuiltinOverload { label: "float RayTCurrent()", params: &[] },
+        ],
+    },
+    BuiltinFunction {
+        name: "RayTMin",
+        description: "### `RayTMin`\n*DirectX Raytracing (DXR) Intrinsic (SM 6.3+)*\n\nReturns the minimum parametric distance `t_min` along the ray (`float`).",
+        overloads: &[
+            BuiltinOverload { label: "float RayTMin()", params: &[] },
         ],
     },
 
@@ -1599,14 +1657,14 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
     },
     BuiltinFunction {
         name: "FastSRGBToLinear",
-        description: "### `FastSRGBToLinear`\n*Unity Core Library / Color.hlsl*\n\nApproximates sRGB to linear conversion using gamma 2.2 approximation ($c^{2.2}$).",
+        description: "### `FastSRGBToLinear`\n*Unity Core Library / Color.hlsl*\n\nApproximates sRGB to linear conversion using quadratic gamma 2.0 approximation ($c^2$).",
         overloads: &[
             BuiltinOverload { label: "half3 FastSRGBToLinear(half3 c)", params: &["half3 c"] },
         ],
     },
     BuiltinFunction {
         name: "FastLinearToSRGB",
-        description: "### `FastLinearToSRGB`\n*Unity Core Library / Color.hlsl*\n\nApproximates linear to sRGB conversion using $c^{1/2.2}$.",
+        description: "### `FastLinearToSRGB`\n*Unity Core Library / Color.hlsl*\n\nApproximates linear to sRGB conversion using square-root gamma 2.0 approximation ($\\sqrt{c}$).",
         overloads: &[
             BuiltinOverload { label: "half3 FastLinearToSRGB(half3 c)", params: &["half3 c"] },
         ],
@@ -1624,13 +1682,6 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
         description: "### `SafePositivePow`\n*Unity Core Library / Common.hlsl*\n\nComputes $\\max(\\text{base}, 0)^{\\text{power}}$ safely avoiding negative base undefined behaviors.",
         overloads: &[
             BuiltinOverload { label: "float SafePositivePow(float base, float power)", params: &["float base", "float power"] },
-        ],
-    },
-    BuiltinFunction {
-        name: "UnityWorldToClipPos",
-        description: "### `UnityWorldToClipPos`\n*Unity Built-in / UnityCG.cginc*\n\nTransforms a world space position directly into homogeneous clip space.",
-        overloads: &[
-            BuiltinOverload { label: "float4 UnityWorldToClipPos(float3 pos)", params: &["float3 pos"] },
         ],
     },
     BuiltinFunction {
@@ -1746,7 +1797,7 @@ pub static BUILTIN_TYPES: &[&str] = &[
     "SamplerState", "SamplerComparisonState",
     "sampler2D", "samplerCUBE",
     // Buffers
-    "cbuffer", "tbuffer",
+    "tbuffer",
     "StructuredBuffer", "RWStructuredBuffer",
     "ByteAddressBuffer", "RWByteAddressBuffer",
 ];
@@ -1798,6 +1849,12 @@ pub static BUILTIN_VARIABLES: &[(&str, &str)] = &[
     ("SV_GroupThreadID", "System-Value: 3D thread index within current compute group (`uint3`)."),
     ("SV_DispatchGrid", "System-Value: Amplification shader dispatch grid dimension (`uint3`)."),
 
+    // HLSL System-Value Semantics (Tessellation - Hull / Domain)
+    ("SV_TessFactor", "System-Value: Patch edge tessellation factors (`float[2]`, `float[3]`, or `float[4]`)."),
+    ("SV_InsideTessFactor", "System-Value: Patch interior tessellation factors (`float` or `float[2]`)."),
+    ("SV_DomainLocation", "System-Value: Barycentric/domain coordinates for domain shader (`float2` or `float3`)."),
+    ("SV_OutputControlPointID", "System-Value: Control point index processed by hull shader (`uint`)."),
+
     // Classic Vertex / Interpolator Semantics
     ("POSITION", "Vertex attribute semantic: Object-space vertex position."),
     ("POSITION0", "Vertex attribute semantic: Object-space vertex position 0."),
@@ -1839,8 +1896,11 @@ pub static BUILTIN_KEYWORDS: &[&str] = &[
     "in", "out", "inout", "packoffset",
     // ShaderLab Keywords
     "Shader", "Properties", "SubShader", "Pass", "Tags",
-    "Blend", "BlendOp", "ZWrite", "ZTest", "Cull", "ColorMask", "Offset",
-    "Stencil", "Ref", "Comp", "Fail", "ZFail",
+    "Blend", "BlendOp", "ZWrite", "ZTest", "ZClip", "Cull", "ColorMask", "Offset",
+    "Conservative", "AlphaToMask", "UsePass", "GrabPass",
+    "Stencil", "Ref", "ReadMask", "WriteMask", "Comp", "Fail", "ZFail",
+    "CompFront", "PassFront", "FailFront", "ZFailFront",
+    "CompBack", "PassBack", "FailBack", "ZFailBack",
     "HLSLPROGRAM", "ENDHLSL", "CGPROGRAM", "ENDCG",
     "HLSLINCLUDE", "CGINCLUDE",
     "LOD", "Name", "Fallback", "CustomEditor",
@@ -1923,16 +1983,16 @@ pub fn find_builtin_function(name: &str) -> Option<&'static BuiltinFunction> {
     BUILTIN_FUNCTIONS.iter().find(|f| f.name == name)
 }
 
-pub static SHADERLAB_PROPERTY_TYPES: &[(&str, &str, &str)] = &[
-    ("Color", "(\"Color\", Color) = (1, 1, 1, 1)", "RGBA color property with color picker"),
-    ("Vector", "(\"Vector\", Vector) = (0, 0, 0, 0)", "4D floating-point vector property"),
-    ("Float", "(\"Float\", Float) = 0.0", "Floating-point scalar property"),
-    ("Int", "(\"Int\", Int) = 0", "Integer scalar property"),
-    ("Range", "(\"Range\", Range(0, 1)) = 0.5", "Bounded slider floating-point property"),
-    ("2D", "(\"Texture\", 2D) = \"white\" {}", "2D texture slot with default tint"),
-    ("3D", "(\"Volume\", 3D) = \"\" {}", "3D volumetric texture slot"),
-    ("Cube", "(\"Cubemap\", Cube) = \"\" {}", "Cubemap reflection texture slot"),
-    ("2DArray", "(\"TextureArray\", 2DArray) = \"\" {}", "2D texture array slot"),
+pub static SHADERLAB_PROPERTY_TYPES: &[(&str, &str, &str, &str)] = &[
+    ("Float", "_${1:Float} (\"${2:Float}\", Float) = ${3:0.0}", " (\"${1:Float}\", Float) = ${2:0.0}", "Floating-point scalar property"),
+    ("Int", "_${1:Int} (\"${2:Int}\", Int) = ${3:0}", " (\"${1:Int}\", Int) = ${2:0}", "Integer scalar property"),
+    ("Range", "_${1:Range} (\"${2:Range}\", Range(${3:0}, ${4:1})) = ${5:0.5}", " (\"${1:Range}\", Range(${2:0}, ${3:1})) = ${4:0.5}", "Bounded slider floating-point property"),
+    ("Color", "_${1:Color} (\"${2:Color}\", Color) = (${3:1, 1, 1, 1})", " (\"${1:Color}\", Color) = (${2:1, 1, 1, 1})", "RGBA color property with color picker"),
+    ("Vector", "_${1:Vector} (\"${2:Vector}\", Vector) = (${3:0, 0, 0, 0})", " (\"${1:Vector}\", Vector) = (${2:0, 0, 0, 0})", "4D floating-point vector property"),
+    ("2D", "_${1:MainTex} (\"${2:Texture}\", 2D) = \"${3:white}\" {}", " (\"${1:Texture}\", 2D) = \"${2:white}\" {}", "2D texture slot with default tint"),
+    ("3D", "_${1:Volume} (\"${2:Volume}\", 3D) = \"\" {}", " (\"${1:Volume}\", 3D) = \"\" {}", "3D volumetric texture slot"),
+    ("Cube", "_${1:Cubemap} (\"${2:Cubemap}\", Cube) = \"\" {}", " (\"${1:Cubemap}\", Cube) = \"\" {}", "Cubemap reflection texture slot"),
+    ("2DArray", "_${1:TexArray} (\"${2:TextureArray}\", 2DArray) = \"\" {}", " (\"${1:TextureArray}\", 2DArray) = \"\" {}", "2D texture array slot"),
 ];
 
 pub static SHADERLAB_RENDER_STATES: &[(&str, &str, &str)] = &[
@@ -1951,19 +2011,100 @@ pub static SHADERLAB_RENDER_STATES: &[(&str, &str, &str)] = &[
     ("ZTest", "ZTest Greater", "Passes if fragment depth is greater than current depth"),
     ("ZTest", "ZTest GEqual", "Passes if fragment depth is greater than or equal to current depth"),
     ("ZTest", "ZTest NotEqual", "Passes if fragment depth does not equal current depth"),
+    ("ZTest", "ZTest Off", "Disables depth testing completely (equivalent to ZTest Always)"),
+    // ZClip
+    ("ZClip", "ZClip True", "Enables depth clipping (default). Fragments outside near/far clipping planes are clipped"),
+    ("ZClip", "ZClip False", "Disables depth clipping (depth clamping). Fragments outside near/far planes are clamped instead of clipped (useful for shadow maps and portals)"),
     // Blend
     ("Blend", "Blend Off", "Disables alpha blending (opaque rendering)"),
     ("Blend", "Blend SrcAlpha OneMinusSrcAlpha", "Standard traditional alpha blending: (Src * A) + (Dst * (1 - A))"),
     ("Blend", "Blend One One", "Additive blending (useful for particle effects, fire, lights)"),
     ("Blend", "Blend OneMinusDstColor One", "Soft additive blending"),
     ("Blend", "Blend DstColor Zero", "Multiplicative blending (shadows, darkening)"),
+    ("Blend", "Blend DstColor SrcColor", "2x multiplicative blending: Result = 2 * (Src * Dst)"),
     ("Blend", "Blend SrcColor OneMinusSrcColor", "Color-weighted blending"),
     ("Blend", "Blend One OneMinusSrcAlpha", "Premultiplied alpha blending"),
+    ("Blend", "Blend SrcAlpha OneMinusSrcAlpha, One OneMinusSrcAlpha", "Separate blend: standard alpha blend for color, premultiplied alpha blend for alpha"),
+    ("Blend", "Blend One One, One Zero", "Separate blend: additive color, preserves destination alpha"),
+    ("Blend", "Blend 0 SrcAlpha OneMinusSrcAlpha", "Alpha blending specifically for render target 0"),
+    ("Blend", "Blend 1 One One", "Additive blending specifically for render target 1"),
+    // BlendOp
+    ("BlendOp", "BlendOp Add", "Adds source and destination results together (default): Result = Src + Dst"),
+    ("BlendOp", "BlendOp Sub", "Subtracts destination from source: Result = Src - Dst"),
+    ("BlendOp", "BlendOp RevSub", "Subtracts source from destination: Result = Dst - Src"),
+    ("BlendOp", "BlendOp Min", "Takes the smaller value between source and destination: Result = min(Src, Dst)"),
+    ("BlendOp", "BlendOp Max", "Takes the larger value between source and destination: Result = max(Src, Dst)"),
+    ("BlendOp", "BlendOp LogicalClear", "Logical blend operation: Result = 0 (DirectX 11.1+ / Vulkan)"),
+    ("BlendOp", "BlendOp LogicalSet", "Logical blend operation: Result = ~0"),
+    ("BlendOp", "BlendOp LogicalCopy", "Logical blend operation: Result = Src"),
+    ("BlendOp", "BlendOp LogicalCopyInverted", "Logical blend operation: Result = ~Src"),
+    ("BlendOp", "BlendOp LogicalNoop", "Logical blend operation: Result = Dst"),
+    ("BlendOp", "BlendOp LogicalInvert", "Logical blend operation: Result = ~Dst"),
+    ("BlendOp", "BlendOp LogicalAnd", "Logical blend operation: Result = Src & Dst"),
+    ("BlendOp", "BlendOp LogicalNand", "Logical blend operation: Result = ~(Src & Dst)"),
+    ("BlendOp", "BlendOp LogicalOr", "Logical blend operation: Result = Src | Dst"),
+    ("BlendOp", "BlendOp LogicalNor", "Logical blend operation: Result = ~(Src | Dst)"),
+    ("BlendOp", "BlendOp LogicalXor", "Logical blend operation: Result = Src ^ Dst"),
+    ("BlendOp", "BlendOp LogicalEquiv", "Logical blend operation: Result = ~(Src ^ Dst)"),
+    ("BlendOp", "BlendOp LogicalAndReverse", "Logical blend operation: Result = Src & ~Dst"),
+    ("BlendOp", "BlendOp LogicalAndInverted", "Logical blend operation: Result = ~Src & Dst"),
+    ("BlendOp", "BlendOp LogicalOrReverse", "Logical blend operation: Result = Src | ~Dst"),
+    ("BlendOp", "BlendOp LogicalOrInverted", "Logical blend operation: Result = ~Src & Dst"),
+    ("BlendOp", "BlendOp Add, Add", "Separate blend operation for color and alpha channels"),
+    ("BlendOp", "BlendOp Min, Max", "Separate blend operation: Min for color, Max for alpha"),
     // ColorMask
     ("ColorMask", "ColorMask RGBA", "Writes to Red, Green, Blue, and Alpha channels (default)"),
     ("ColorMask", "ColorMask RGB", "Writes to Red, Green, and Blue channels, leaving Alpha untouched"),
     ("ColorMask", "ColorMask A", "Writes only to the Alpha channel"),
     ("ColorMask", "ColorMask 0", "Disables color output entirely (useful for depth-only or stencil-only passes)"),
+    ("ColorMask", "ColorMask R", "Writes only to the Red channel"),
+    ("ColorMask", "ColorMask G", "Writes only to the Green channel"),
+    ("ColorMask", "ColorMask B", "Writes only to the Blue channel"),
+    ("ColorMask", "ColorMask RGBA 0", "Sets color mask to RGBA for render target 0"),
+    ("ColorMask", "ColorMask 0 1", "Disables color output on render target 1"),
+    // Offset
+    ("Offset", "Offset -1, -1", "Pulls polygon closer to camera (negative depth offset). Prevents Z-fighting on decals and wireframes"),
+    ("Offset", "Offset 1, 1", "Pushes polygon further away from camera (positive depth offset)"),
+    ("Offset", "Offset 0, 0", "Default depth offset (no bias)"),
+    // Conservative
+    ("Conservative", "Conservative True", "Enables conservative rasterization (pixel rendered if any polygon part touches it). Useful for shadow mapping and voxelization"),
+    ("Conservative", "Conservative False", "Disables conservative rasterization (standard center sampling)"),
+    // AlphaToMask
+    ("AlphaToMask", "AlphaToMask On", "Enables Alpha-to-Coverage (MSAA alpha testing). Smooth alpha cutout on foliage and fences"),
+    ("AlphaToMask", "AlphaToMask Off", "Disables Alpha-to-Coverage (default)"),
+    // Stencil Commands
+    ("Ref", "Ref 1", "Stencil reference value to compare against and/or write (0-255)"),
+    ("ReadMask", "ReadMask 255", "Stencil 8-bit read mask (0-255)"),
+    ("WriteMask", "WriteMask 255", "Stencil 8-bit write mask (0-255)"),
+    ("Comp", "Comp Always", "Stencil test comparison: Always pass"),
+    ("Comp", "Comp Equal", "Stencil test comparison: Pass if stencil buffer equals reference value"),
+    ("Comp", "Comp NotEqual", "Stencil test comparison: Pass if stencil buffer does not equal reference value"),
+    ("Comp", "Comp Less", "Stencil test comparison: Pass if stencil buffer is less than reference value"),
+    ("Comp", "Comp Greater", "Stencil test comparison: Pass if stencil buffer is greater than reference value"),
+    ("Comp", "Comp LEqual", "Stencil test comparison: Pass if stencil buffer is less than or equal to reference value"),
+    ("Comp", "Comp GEqual", "Stencil test comparison: Pass if stencil buffer is greater than or equal to reference value"),
+    ("Comp", "Comp Never", "Stencil test comparison: Never pass"),
+    ("Pass", "Pass Keep", "Stencil operation when stencil and depth tests pass: Keep current stencil value"),
+    ("Pass", "Pass Replace", "Stencil operation when stencil and depth tests pass: Replace with reference value"),
+    ("Pass", "Pass Zero", "Stencil operation when stencil and depth tests pass: Set stencil to 0"),
+    ("Pass", "Pass IncrSat", "Stencil operation when stencil and depth tests pass: Increment value, clamp at 255"),
+    ("Pass", "Pass DecrSat", "Stencil operation when stencil and depth tests pass: Decrement value, clamp at 0"),
+    ("Pass", "Pass Invert", "Stencil operation when stencil and depth tests pass: Bitwise invert stencil bits"),
+    ("Pass", "Pass IncrWrap", "Stencil operation when stencil and depth tests pass: Increment value, wrap 255 to 0"),
+    ("Pass", "Pass DecrWrap", "Stencil operation when stencil and depth tests pass: Decrement value, wrap 0 to 255"),
+    ("Fail", "Fail Keep", "Stencil operation when stencil test fails: Keep current stencil value"),
+    ("Fail", "Fail Replace", "Stencil operation when stencil test fails: Replace with reference value"),
+    ("Fail", "Fail Zero", "Stencil operation when stencil test fails: Set stencil to 0"),
+    ("ZFail", "ZFail Keep", "Stencil operation when stencil passes but depth test fails: Keep current stencil value"),
+    ("ZFail", "ZFail Replace", "Stencil operation when stencil passes but depth test fails: Replace with reference value"),
+    ("ZFail", "ZFail Zero", "Stencil operation when stencil passes but depth test fails: Set stencil to 0"),
+    // Pass Commands
+    ("UsePass", "UsePass \"Shader/PASSNAME\"", "Inserts a named pass from another shader into this SubShader"),
+    ("GrabPass", "GrabPass { \"_BackgroundTexture\" }", "Captures current frame buffer into a named texture before executing this pass"),
+    ("GrabPass", "GrabPass { }", "Captures current frame buffer into default _GrabTexture"),
+    ("Name", "Name \"PassName\"", "Assigns a name to this pass (used by UsePass and frame debugger)"),
+    ("LOD", "LOD 100", "Sets level of detail limit for SubShader (compared against Shader.globalMaximumLOD)"),
+    ("LOD", "LOD 200", "Sets level of detail limit for SubShader"),
     // Lighting
     ("Lighting", "Lighting Off", "Disables fixed-function lighting (standard for 2D sprites, UI, and unlit shaders)"),
     ("Lighting", "Lighting On", "Enables fixed-function lighting"),
@@ -1996,3 +2137,547 @@ pub static SHADERLAB_TAGS: &[(&str, &str)] = &[
     ("\"LightMode\"=\"Meta\"", "Pass evaluated by Unity lightmapper for GI light baking"),
 ];
 
+pub static SHADERLAB_ATTRIBUTES: &[(&str, &str, &str)] = &[
+    ("MainColor", "MainColor", "Marks property as primary diffuse/base color in Material Inspector and URP/HDRP"),
+    ("MainTexture", "MainTexture", "Marks property as primary diffuse/albedo texture in Material Inspector and URP/HDRP"),
+    ("HDR", "HDR", "Enables high dynamic range (HDR) color picker with wide intensity range and exposure control"),
+    ("HideInInspector", "HideInInspector", "Hides this property from the Unity Material Inspector"),
+    ("NoScaleOffset", "NoScaleOffset", "Hides texture tiling and offset controls in the Material Inspector"),
+    ("Normal", "Normal", "Validates that the assigned texture is marked as a Normal Map"),
+    ("SingleLineTexture", "SingleLineTexture", "Displays texture property in a compact single-line field"),
+    ("PerRendererData", "PerRendererData", "Fetches texture/property from SpriteRenderer or MaterialPropertyBlock"),
+    ("MaterialToggle", "MaterialToggle", "Renders float as a checkbox toggle and defines a shader keyword (e.g. PROPERTY_ON)"),
+    ("Toggle", "Toggle", "Renders float property as a checkbox toggle"),
+    ("Toggle", "Toggle(${1:KEYWORD})", "Checkbox toggle setting a specific shader keyword when enabled"),
+    ("KeywordEnum", "KeywordEnum(${1:ChoiceA, ChoiceB, ChoiceC})", "Displays a dropdown popup setting mutually exclusive shader keywords"),
+    ("Enum", "Enum(${1:UnityEngine.Rendering.CullMode})", "Displays an enum dropdown from a C# Enum or custom values"),
+    ("Space", "Space", "Adds vertical spacing in the Material Inspector"),
+    ("Header", "Header(\"${1:Section Title}\")", "Adds a bold header section title in the Material Inspector"),
+    ("IntRange", "IntRange", "Restricts Range slider values to whole integers"),
+    ("Tooltip", "Tooltip(\"${1:Description}\")", "Adds a hover tooltip in the Material Inspector"),
+];
+
+pub static SHADERLAB_TAG_KEYS_AND_VALUES: &[(&str, &[&str], &str)] = &[
+    ("RenderType", &["\"Opaque\"", "\"Transparent\"", "\"TransparentCutout\"", "\"Background\"", "\"Overlay\"", "\"TreeOpaque\"", "\"TreeTransparentCutout\"", "\"TreeSoftSurround\"", "\"Water\"", "\"Grass\""], "Classifies shader for replacement shaders and depth/shadow passes"),
+    ("RenderPipeline", &["\"UniversalPipeline\"", "\"HighDefinitionPipeline\""], "Restricts SubShader to a specific Scriptable Render Pipeline"),
+    ("Queue", &["\"Geometry\"", "\"Geometry+1\"", "\"AlphaTest\"", "\"Transparent\"", "\"Transparent+1\"", "\"Overlay\"", "\"Background\""], "Determines render sorting order queue"),
+    ("LightMode", &["\"UniversalForward\"", "\"UniversalGBuffer\"", "\"Universal2D\"", "\"NormalsRendering\"", "\"ShadowCaster\"", "\"DepthOnly\"", "\"DepthNormals\"", "\"Meta\"", "\"ForwardBase\"", "\"ForwardAdd\"", "\"Deferred\"", "\"Vertex\"", "\"MotionVectors\""], "Specifies pass role in lighting and pipeline execution"),
+    ("IgnoreProjector", &["\"True\"", "\"False\""], "Whether 3D projectors affect this material (True for 2D sprites/UI)"),
+    ("PreviewType", &["\"Plane\"", "\"Skybox\""], "Shape displayed in the material preview Inspector (Plane for 2D/UI)"),
+    ("CanUseSpriteAtlas", &["\"True\"", "\"False\""], "Enables UV coordinate packing for 2D sprite atlas rendering"),
+    ("DisableBatching", &["\"True\"", "\"False\"", "\"LODFading\""], "Disables draw call dynamic batching if vertex shader modifies positions"),
+    ("UniversalMaterialType", &["\"Lit\"", "\"Unlit\""], "URP material classification"),
+];
+
+pub static SHADERLAB_COMMON_PROPERTIES: &[(&str, &str, &str)] = &[
+    ("[MainColor] _BaseColor", "[MainColor] _BaseColor (\"Base Color\", Color) = (1, 1, 1, 1)", "Standard URP/HDRP primary diffuse color"),
+    ("[MainTexture] _BaseMap", "[MainTexture] _BaseMap (\"Base Map\", 2D) = \"white\" {}", "Standard URP/HDRP primary albedo texture"),
+    ("_Color", "_Color (\"Color\", Color) = (1, 1, 1, 1)", "Built-in / Legacy standard color property"),
+    ("_MainTex", "_MainTex (\"Texture\", 2D) = \"white\" {}", "Built-in / Legacy standard texture property"),
+    ("_BumpMap", "[Normal] _BumpMap (\"Normal Map\", 2D) = \"bump\" {}", "Tangent-space normal map texture"),
+    ("_Metallic", "_Metallic (\"Metallic\", Range(0.0, 1.0)) = 0.0", "Metallic surface parameter (0 = dielectric, 1 = metal)"),
+    ("_Smoothness", "_Smoothness (\"Smoothness\", Range(0.0, 1.0)) = 0.5", "Surface smoothness / microfacet roughness parameter"),
+    ("_EmissionColor", "[HDR] _EmissionColor (\"Emission Color\", Color) = (0, 0, 0, 1)", "HDR emissive glow color"),
+    ("_EmissionMap", "_EmissionMap (\"Emission Map\", 2D) = \"black\" {}", "Emissive light mask texture"),
+    ("_Cutoff", "_Cutoff (\"Alpha Cutoff\", Range(0.0, 1.0)) = 0.5", "Alpha testing / clipping threshold"),
+    ("_BumpScale", "_BumpScale (\"Normal Scale\", Float) = 1.0", "Normal map perturbation intensity"),
+    ("_OcclusionMap", "_OcclusionMap (\"Occlusion Map\", 2D) = \"white\" {}", "Ambient occlusion texture"),
+    ("_OcclusionStrength", "_OcclusionStrength (\"Occlusion Strength\", Range(0.0, 1.0)) = 1.0", "Ambient occlusion shadow intensity"),
+    ("_Glossiness", "_Glossiness (\"Smoothness\", Range(0.0, 1.0)) = 0.5", "Legacy / Standard shader smoothness parameter"),
+    ("_SpecColor", "_SpecColor (\"Specular\", Color) = (0.2, 0.2, 0.2, 1.0)", "Specular reflection highlight color"),
+    ("_DetailAlbedoMap", "_DetailAlbedoMap (\"Detail Albedo x2\", 2D) = \"gray\" {}", "Secondary detail albedo texture multiplied by 2"),
+    ("_DetailNormalMap", "[Normal] _DetailNormalMap (\"Normal Map\", 2D) = \"bump\" {}", "Secondary high-frequency detail normal map"),
+    ("_DetailNormalMapScale", "_DetailNormalMapScale (\"Scale\", Float) = 1.0", "Detail normal map perturbation scale"),
+    ("_Surface", "_Surface (\"Surface Type\", Float) = 0.0", "URP surface type (0.0 = Opaque, 1.0 = Transparent)"),
+    ("_Blend", "_Blend (\"Blend Mode\", Float) = 0.0", "URP blend mode (0 = Alpha, 1 = Premultiply, 2 = Additive, 3 = Multiply)"),
+    ("_Cull", "_Cull (\"Culling\", Float) = 2.0", "Polygon culling mode (0 = Off, 1 = Front, 2 = Back)"),
+    ("_ZWrite", "_ZWrite (\"ZWrite\", Float) = 1.0", "Depth write control (0.0 = Off, 1.0 = On)"),
+    ("_QueueOffset", "_QueueOffset (\"Queue Offset\", Float) = 0.0", "Render queue priority offset"),
+    ("_ReceiveShadows", "_ReceiveShadows (\"Receive Shadows\", Float) = 1.0", "Toggles receiving real-time shadows (0.0 = Off, 1.0 = On)"),
+];
+
+pub static SHADERLAB_PROPERTY_KEYWORD_SNIPPETS: &[(&str, &str, &str)] = &[
+    ("float", "_${1:Float} (\"${2:Float}\", Float) = ${3:0.0}", "Snippet: Float scalar property"),
+    ("range", "_${1:Range} (\"${2:Range}\", Range(${3:0.0}, ${4:1.0})) = ${5:0.5}", "Snippet: Bounded Range slider property"),
+    ("color", "_${1:Color} (\"${2:Color}\", Color) = (${3:1, 1, 1, 1})", "Snippet: RGBA Color property"),
+    ("hdr", "[HDR] _${1:EmissionColor} (\"${2:Emission Color}\", Color) = (${3:0, 0, 0, 1})", "Snippet: High Dynamic Range (HDR) Color property"),
+    ("vector", "_${1:Vector} (\"${2:Vector}\", Vector) = (${3:0, 0, 0, 0})", "Snippet: 4D Vector property"),
+    ("2d", "_${1:Texture} (\"${2:Texture}\", 2D) = \"${3:white}\" {}", "Snippet: 2D Texture property"),
+    ("tex", "_${1:Texture} (\"${2:Texture}\", 2D) = \"${3:white}\" {}", "Snippet: 2D Texture property"),
+    ("texture", "_${1:Texture} (\"${2:Texture}\", 2D) = \"${3:white}\" {}", "Snippet: 2D Texture property"),
+    ("normal", "[Normal] _${1:BumpMap} (\"${2:Normal Map}\", 2D) = \"bump\" {}", "Snippet: Normal Map 2D texture property"),
+    ("cube", "_${1:Cubemap} (\"${2:Cubemap}\", Cube) = \"\" {}", "Snippet: Reflection Cubemap property"),
+    ("int", "_${1:Int} (\"${2:Int}\", Int) = ${3:0}", "Snippet: Integer scalar property"),
+    ("toggle", "[Toggle] _${1:Feature} (\"${2:Enable Feature}\", Float) = ${3:0}", "Snippet: Checkbox toggle property"),
+    ("keywordenum", "[KeywordEnum(${1:ChoiceA, ChoiceB})] _${2:Mode} (\"${3:Mode}\", Float) = 0", "Snippet: KeywordEnum dropdown property"),
+    ("space", "[Space]", "Snippet: Vertical inspector spacing"),
+    ("header", "[Header(\"${1:Section Title}\")]", "Snippet: Bold inspector section header"),
+];
+
+pub static SHADERLAB_TYPE_COMPLETIONS_AFTER_COMMA: &[(&str, &str, &str)] = &[
+    ("Color", "Color) = (1, 1, 1, 1)", "Color property with RGBA default (1, 1, 1, 1)"),
+    ("Float", "Float) = 0.0", "Floating-point scalar property with default 0.0"),
+    ("Int", "Int) = 0", "Integer scalar property with default 0"),
+    ("Range", "Range(${1:0.0}, ${2:1.0})) = ${3:0.5}", "Bounded Range slider property"),
+    ("2D", "2D) = \"${1:white}\" {}", "2D texture property with default 'white' tint"),
+    ("Vector", "Vector) = (${1:0}, ${2:0}, ${3:0}, ${4:0})", "4D vector property with default (0, 0, 0, 0)"),
+    ("Cube", "Cube) = \"\" {}", "Cubemap reflection texture slot"),
+    ("3D", "3D) = \"\" {}", "3D volumetric texture slot"),
+    ("2DArray", "2DArray) = \"\" {}", "2D texture array slot"),
+    ("Rect", "Rect) = \"white\" {}", "Rect texture slot"),
+];
+
+pub struct EngineVariable {
+    pub name: &'static str,
+    pub var_type: &'static str,
+    pub engine: &'static str, // "unity", "unreal"
+    pub detail: &'static str,
+    pub description: &'static str,
+}
+
+pub fn find_engine_variable(name: &str) -> Option<&'static EngineVariable> {
+    ENGINE_VARIABLES.iter().find(|v| v.name == name)
+}
+
+pub static ENGINE_VARIABLES: &[EngineVariable] = &[
+    // ========================================================================
+    // Unity: Time & DeltaTime Variables
+    // ========================================================================
+    EngineVariable {
+        name: "_Time",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 _Time (t/20, t, t*2, t*3)",
+        description: "### `_Time`\n*Unity Built-in Shader Variable*\n\nTime since level load in seconds:\n- `x`: `t / 20`\n- `y`: `t` (current time in seconds)\n- `z`: `t * 2`\n- `w`: `t * 3`",
+    },
+    EngineVariable {
+        name: "_SinTime",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 _SinTime (sin(t/8), sin(t/4), sin(t/2), sin(t))",
+        description: "### `_SinTime`\n*Unity Built-in Shader Variable*\n\nSine of time since level load:\n- `x`: `sin(t / 8)`\n- `y`: `sin(t / 4)`\n- `z`: `sin(t / 2)`\n- `w`: `sin(t)`",
+    },
+    EngineVariable {
+        name: "_CosTime",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 _CosTime (cos(t/8), cos(t/4), cos(t/2), cos(t))",
+        description: "### `_CosTime`\n*Unity Built-in Shader Variable*\n\nCosine of time since level load:\n- `x`: `cos(t / 8)`\n- `y`: `cos(t / 4)`\n- `z`: `cos(t / 2)`\n- `w`: `cos(t)`",
+    },
+    EngineVariable {
+        name: "unity_DeltaTime",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 unity_DeltaTime (dt, 1/dt, smoothDt, 1/smoothDt)",
+        description: "### `unity_DeltaTime`\n*Unity Built-in Shader Variable*\n\nDelta time between rendering frames in seconds:\n- `x`: `dt` (frame delta time)\n- `y`: `1.0 / dt`\n- `z`: `smoothDeltaTime`\n- `w`: `1.0 / smoothDeltaTime`",
+    },
+
+    // ========================================================================
+    // Unity: Camera, Screen & Projection Parameters
+    // ========================================================================
+    EngineVariable {
+        name: "_WorldSpaceCameraPos",
+        var_type: "float3",
+        engine: "unity",
+        detail: "float3 _WorldSpaceCameraPos",
+        description: "### `_WorldSpaceCameraPos`\n*Unity Built-in Shader Variable*\n\nCamera position in World Space coordinates (`float3`).",
+    },
+    EngineVariable {
+        name: "_ProjectionParams",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 _ProjectionParams (sign, near, far, 1/far)",
+        description: "### `_ProjectionParams`\n*Unity Built-in Shader Variable*\n\nCamera projection parameters:\n- `x`: `1.0` (or `-1.0` if flipping projection for render-textures)\n- `y`: Camera near plane\n- `z`: Camera far plane\n- `w`: `1.0 / far`",
+    },
+    EngineVariable {
+        name: "_ScreenParams",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 _ScreenParams (width, height, 1+1/width, 1+1/height)",
+        description: "### `_ScreenParams`\n*Unity Built-in Shader Variable*\n\nCurrent render target resolution in pixels:\n- `x`: Width in pixels\n- `y`: Height in pixels\n- `z`: `1.0 + 1.0 / width`\n- `w`: `1.0 + 1.0 / height`",
+    },
+    EngineVariable {
+        name: "_ScaledScreenParams",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 _ScaledScreenParams (URP)",
+        description: "### `_ScaledScreenParams`\n*Unity URP Shader Variable*\n\nRender scale-adjusted screen resolution in pixels for Dynamic Resolution Scaling.",
+    },
+    EngineVariable {
+        name: "_ZBufferParams",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 _ZBufferParams",
+        description: "### `_ZBufferParams`\n*Unity Built-in Shader Variable*\n\nParameters to linearize non-linear Z buffer depth values to view space distance.",
+    },
+    EngineVariable {
+        name: "unity_OrthoParams",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 unity_OrthoParams (width, height, unused, isOrtho)",
+        description: "### `unity_OrthoParams`\n*Unity Built-in Shader Variable*\n\nOrthographic projection parameters:\n- `x`: Orthographic width\n- `y`: Orthographic height\n- `w`: `1.0` if orthographic camera, `0.0` if perspective",
+    },
+    EngineVariable {
+        name: "unity_CameraWorldClipPlanes",
+        var_type: "float4[6]",
+        engine: "unity",
+        detail: "float4 unity_CameraWorldClipPlanes[6]",
+        description: "### `unity_CameraWorldClipPlanes`\n*Unity Built-in Shader Variable*\n\nWorld space frustum clipping planes (Left, Right, Bottom, Top, Near, Far).",
+    },
+
+    // ========================================================================
+    // Unity: Transformation Matrices (Object, World, View, Projection)
+    // ========================================================================
+    EngineVariable {
+        name: "unity_ObjectToWorld",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 unity_ObjectToWorld",
+        description: "### `unity_ObjectToWorld`\n*Unity Transformation Matrix*\n\nCurrent model matrix. Transforms coordinates from Object Space to World Space.",
+    },
+    EngineVariable {
+        name: "unity_WorldToObject",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 unity_WorldToObject",
+        description: "### `unity_WorldToObject`\n*Unity Transformation Matrix*\n\nInverse model matrix. Transforms coordinates from World Space to Object Space.",
+    },
+    EngineVariable {
+        name: "unity_MatrixVP",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 unity_MatrixVP",
+        description: "### `unity_MatrixVP`\n*Unity Transformation Matrix*\n\nView-Projection matrix. Transforms coordinates from World Space to Homogeneous Clip Space.",
+    },
+    EngineVariable {
+        name: "unity_MatrixV",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 unity_MatrixV",
+        description: "### `unity_MatrixV`\n*Unity Transformation Matrix*\n\nView matrix. Transforms coordinates from World Space to Camera (View) Space.",
+    },
+    EngineVariable {
+        name: "unity_MatrixInvV",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 unity_MatrixInvV",
+        description: "### `unity_MatrixInvV`\n*Unity Transformation Matrix*\n\nInverse View matrix. Transforms coordinates from Camera (View) Space to World Space.",
+    },
+    EngineVariable {
+        name: "unity_MatrixP",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 unity_MatrixP",
+        description: "### `unity_MatrixP`\n*Unity Transformation Matrix*\n\nProjection matrix. Transforms coordinates from Camera (View) Space to Clip Space.",
+    },
+    EngineVariable {
+        name: "unity_MatrixInvP",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 unity_MatrixInvP",
+        description: "### `unity_MatrixInvP`\n*Unity Transformation Matrix*\n\nInverse Projection matrix. Transforms coordinates from Clip Space to Camera (View) Space.",
+    },
+    EngineVariable {
+        name: "UNITY_MATRIX_MVP",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 / macro UNITY_MATRIX_MVP",
+        description: "### `UNITY_MATRIX_MVP`\n*Unity Transformation Matrix*\n\nModel-View-Projection matrix. Transforms coordinates directly from Object Space to Clip Space.",
+    },
+    EngineVariable {
+        name: "UNITY_MATRIX_MV",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 UNITY_MATRIX_MV",
+        description: "### `UNITY_MATRIX_MV`\n*Unity Transformation Matrix*\n\nModel-View matrix. Transforms coordinates from Object Space to Eye/View Space.",
+    },
+    EngineVariable {
+        name: "UNITY_MATRIX_M",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 UNITY_MATRIX_M",
+        description: "### `UNITY_MATRIX_M`\n*Unity Transformation Matrix*\n\nAlias for `unity_ObjectToWorld`.",
+    },
+    EngineVariable {
+        name: "UNITY_MATRIX_V",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 UNITY_MATRIX_V",
+        description: "### `UNITY_MATRIX_V`\n*Unity Transformation Matrix*\n\nAlias for `unity_MatrixV`.",
+    },
+    EngineVariable {
+        name: "UNITY_MATRIX_P",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 UNITY_MATRIX_P",
+        description: "### `UNITY_MATRIX_P`\n*Unity Transformation Matrix*\n\nAlias for `unity_MatrixP`.",
+    },
+    EngineVariable {
+        name: "UNITY_MATRIX_VP",
+        var_type: "float4x4",
+        engine: "unity",
+        detail: "float4x4 UNITY_MATRIX_VP",
+        description: "### `UNITY_MATRIX_VP`\n*Unity Transformation Matrix*\n\nAlias for `unity_MatrixVP`.",
+    },
+
+    // ========================================================================
+    // Unity: Lighting Variables
+    // ========================================================================
+    EngineVariable {
+        name: "_WorldSpaceLightPos0",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 _WorldSpaceLightPos0",
+        description: "### `_WorldSpaceLightPos0`\n*Unity Lighting Variable*\n\nPosition or direction of the primary light:\n- `w == 0.0`: Directional light (`xyz` is direction toward light source)\n- `w == 1.0`: Point or Spot light (`xyz` is position in world space)",
+    },
+    EngineVariable {
+        name: "_LightColor0",
+        var_type: "half4",
+        engine: "unity",
+        detail: "half4 _LightColor0",
+        description: "### `_LightColor0`\n*Unity Lighting Variable*\n\nColor and intensity of the main light in the current pass.",
+    },
+    EngineVariable {
+        name: "_MainLightPosition",
+        var_type: "float4",
+        engine: "unity",
+        detail: "float4 _MainLightPosition (URP)",
+        description: "### `_MainLightPosition`\n*Unity URP Lighting Variable*\n\nWorld space direction or position of the URP Main Directional Light.",
+    },
+    EngineVariable {
+        name: "_MainLightColor",
+        var_type: "half4",
+        engine: "unity",
+        detail: "half4 _MainLightColor (URP)",
+        description: "### `_MainLightColor`\n*Unity URP Lighting Variable*\n\nColor and intensity of the URP Main Directional Light.",
+    },
+    EngineVariable {
+        name: "_AdditionalLightsCount",
+        var_type: "half4",
+        engine: "unity",
+        detail: "half4 _AdditionalLightsCount (URP)",
+        description: "### `_AdditionalLightsCount`\n*Unity URP Lighting Variable*\n\n`x` channel specifies the count of non-directional additional lights affecting the current object.",
+    },
+
+    // ========================================================================
+    // Unity: Screen Textures (URP & Built-in)
+    // ========================================================================
+    EngineVariable {
+        name: "_CameraDepthTexture",
+        var_type: "Texture2D",
+        engine: "unity",
+        detail: "Texture2D _CameraDepthTexture",
+        description: "### `_CameraDepthTexture`\n*Unity Screen Texture*\n\nScreen-space depth buffer texture rendered by the camera.",
+    },
+    EngineVariable {
+        name: "_CameraNormalsTexture",
+        var_type: "Texture2D",
+        engine: "unity",
+        detail: "Texture2D _CameraNormalsTexture (URP)",
+        description: "### `_CameraNormalsTexture`\n*Unity URP Screen Texture*\n\nScreen-space normals texture rendered by the camera during the DepthNormals pass.",
+    },
+    EngineVariable {
+        name: "_CameraOpaqueTexture",
+        var_type: "Texture2D",
+        engine: "unity",
+        detail: "Texture2D _CameraOpaqueTexture (URP)",
+        description: "### `_CameraOpaqueTexture`\n*Unity URP Screen Texture*\n\nScreen-space color texture copy captured after rendering all opaque geometry.",
+    },
+
+    // ========================================================================
+    // Unity: Transform & Helper Functions / Macros
+    // ========================================================================
+    EngineVariable {
+        name: "TRANSFORM_TEX",
+        var_type: "macro",
+        engine: "unity",
+        detail: "TRANSFORM_TEX(tex, name)",
+        description: "### `TRANSFORM_TEX(tex, name)`\n*Unity UV Macro*\n\nTransforms UV coordinates using Material Inspector Tiling & Offset (`_ST` vector):\n`((tex.xy) * name##_ST.xy + name##_ST.zw)`",
+    },
+    EngineVariable {
+        name: "UnityObjectToClipPos",
+        var_type: "function",
+        engine: "unity",
+        detail: "float4 UnityObjectToClipPos(float3 pos)",
+        description: "### `UnityObjectToClipPos`\n*Unity Built-in Transform Function*\n\nTransforms coordinates from Object Space to Homogeneous Clip Space.",
+    },
+    EngineVariable {
+        name: "TransformObjectToHClip",
+        var_type: "function",
+        engine: "unity",
+        detail: "float4 TransformObjectToHClip(float3 positionOS)",
+        description: "### `TransformObjectToHClip`\n*Unity URP Transform Function*\n\nTransforms vertex position from Object Space to Homogeneous Clip Space.",
+    },
+    EngineVariable {
+        name: "TransformObjectToWorld",
+        var_type: "function",
+        engine: "unity",
+        detail: "float3 TransformObjectToWorld(float3 positionOS)",
+        description: "### `TransformObjectToWorld`\n*Unity URP Transform Function*\n\nTransforms coordinates from Object Space to World Space.",
+    },
+    EngineVariable {
+        name: "TransformWorldToObject",
+        var_type: "function",
+        engine: "unity",
+        detail: "float3 TransformWorldToObject(float3 positionWS)",
+        description: "### `TransformWorldToObject`\n*Unity URP Transform Function*\n\nTransforms coordinates from World Space to Object Space.",
+    },
+    EngineVariable {
+        name: "TransformWorldToHClip",
+        var_type: "function",
+        engine: "unity",
+        detail: "float4 TransformWorldToHClip(float3 positionWS)",
+        description: "### `TransformWorldToHClip`\n*Unity URP Transform Function*\n\nTransforms coordinates from World Space to Homogeneous Clip Space.",
+    },
+    EngineVariable {
+        name: "TransformObjectToWorldNormal",
+        var_type: "function",
+        engine: "unity",
+        detail: "float3 TransformObjectToWorldNormal(float3 normalOS)",
+        description: "### `TransformObjectToWorldNormal`\n*Unity URP Normal Transform Function*\n\nTransforms a normal vector from Object Space to World Space with proper inverse transpose scaling.",
+    },
+    EngineVariable {
+        name: "TransformObjectToWorldDir",
+        var_type: "function",
+        engine: "unity",
+        detail: "float3 TransformObjectToWorldDir(float3 dirOS)",
+        description: "### `TransformObjectToWorldDir`\n*Unity URP Direction Transform Function*\n\nTransforms a direction vector from Object Space to World Space without translation.",
+    },
+    EngineVariable {
+        name: "GetVertexPositionInputs",
+        var_type: "function",
+        engine: "unity",
+        detail: "VertexPositionInputs GetVertexPositionInputs(float3 positionOS)",
+        description: "### `GetVertexPositionInputs`\n*Unity URP Helper Function*\n\nCalculates vertex positions simultaneously in Object, World, View, Clip, and NDC spaces.",
+    },
+    EngineVariable {
+        name: "GetVertexNormalInputs",
+        var_type: "function",
+        engine: "unity",
+        detail: "VertexNormalInputs GetVertexNormalInputs(float3 normalOS, float4 tangentOS)",
+        description: "### `GetVertexNormalInputs`\n*Unity URP Helper Function*\n\nCalculates world space normal, tangent, and bitangent vectors.",
+    },
+    EngineVariable {
+        name: "GetMainLight",
+        var_type: "function",
+        engine: "unity",
+        detail: "Light GetMainLight()",
+        description: "### `GetMainLight`\n*Unity URP Lighting Function*\n\nReturns the `Light` struct for the main directional light in the scene.",
+    },
+    EngineVariable {
+        name: "GetAdditionalLight",
+        var_type: "function",
+        engine: "unity",
+        detail: "Light GetAdditionalLight(uint i, float3 positionWS)",
+        description: "### `GetAdditionalLight`\n*Unity URP Lighting Function*\n\nReturns the `Light` struct for the additional light at index `i` affecting `positionWS`.",
+    },
+    EngineVariable {
+        name: "SAMPLE_TEXTURE2D",
+        var_type: "macro",
+        engine: "unity",
+        detail: "SAMPLE_TEXTURE2D(textureName, samplerName, coord2)",
+        description: "### `SAMPLE_TEXTURE2D`\n*Unity URP Texture Macro*\n\nSamples a 2D Texture using the specified SamplerState.",
+    },
+    EngineVariable {
+        name: "SAMPLE_TEXTURE2D_LOD",
+        var_type: "macro",
+        engine: "unity",
+        detail: "SAMPLE_TEXTURE2D_LOD(textureName, samplerName, coord2, lod)",
+        description: "### `SAMPLE_TEXTURE2D_LOD`\n*Unity URP Texture Macro*\n\nSamples a 2D Texture at an explicit LOD mipmap level.",
+    },
+    EngineVariable {
+        name: "TEXTURE2D",
+        var_type: "macro",
+        engine: "unity",
+        detail: "TEXTURE2D(textureName)",
+        description: "### `TEXTURE2D`\n*Unity URP Texture Macro*\n\nCross-platform declaration macro for a 2D texture.",
+    },
+    EngineVariable {
+        name: "SAMPLER",
+        var_type: "macro",
+        engine: "unity",
+        detail: "SAMPLER(samplerName)",
+        description: "### `SAMPLER`\n*Unity URP Sampler Macro*\n\nCross-platform declaration macro for a SamplerState.",
+    },
+    EngineVariable {
+        name: "UnityPixelSnap",
+        var_type: "function",
+        engine: "unity",
+        detail: "float4 UnityPixelSnap(float4 pos)",
+        description: "### `UnityPixelSnap`\n*Unity 2D Sprite Function*\n\nSnaps vertex position to pixel boundaries for crisp pixel-perfect 2D sprites.",
+    },
+    EngineVariable {
+        name: "UnityGet2DClipping",
+        var_type: "function",
+        engine: "unity",
+        detail: "float UnityGet2DClipping(float2 position, float4 clipRect)",
+        description: "### `UnityGet2DClipping`\n*Unity 2D UI Canvas Function*\n\nEvaluates 2D UI rectangular clipping against `clipRect`.",
+    },
+
+    // ========================================================================
+    // Unreal Engine: View Uniforms & Material Functions
+    // ========================================================================
+    EngineVariable {
+        name: "ResolvedView.WorldCameraOrigin",
+        var_type: "float3",
+        engine: "unreal",
+        detail: "float3 ResolvedView.WorldCameraOrigin",
+        description: "### `ResolvedView.WorldCameraOrigin`\n*Unreal Engine View Uniform*\n\nCamera position in World Space coordinates (`float3`).",
+    },
+    EngineVariable {
+        name: "ResolvedView.GameTime",
+        var_type: "float",
+        engine: "unreal",
+        detail: "float ResolvedView.GameTime",
+        description: "### `ResolvedView.GameTime`\n*Unreal Engine View Uniform*\n\nCurrent game time in seconds.",
+    },
+    EngineVariable {
+        name: "ResolvedView.RealTime",
+        var_type: "float",
+        engine: "unreal",
+        detail: "float ResolvedView.RealTime",
+        description: "### `ResolvedView.RealTime`\n*Unreal Engine View Uniform*\n\nReal wall-clock time in seconds.",
+    },
+    EngineVariable {
+        name: "ResolvedView.DeltaTime",
+        var_type: "float",
+        engine: "unreal",
+        detail: "float ResolvedView.DeltaTime",
+        description: "### `ResolvedView.DeltaTime`\n*Unreal Engine View Uniform*\n\nDelta time between rendering frames in seconds.",
+    },
+    EngineVariable {
+        name: "ResolvedView.ViewSizeAndInvSize",
+        var_type: "float4",
+        engine: "unreal",
+        detail: "float4 ResolvedView.ViewSizeAndInvSize (w, h, 1/w, 1/h)",
+        description: "### `ResolvedView.ViewSizeAndInvSize`\n*Unreal Engine View Uniform*\n\nViewport dimensions: `xy` is pixel width and height, `zw` is inverse width and height.",
+    },
+    EngineVariable {
+        name: "ResolvedView.WorldToClip",
+        var_type: "float4x4",
+        engine: "unreal",
+        detail: "float4x4 ResolvedView.WorldToClip",
+        description: "### `ResolvedView.WorldToClip`\n*Unreal Engine View Uniform*\n\nTransforms coordinates from World Space to Clip Space.",
+    },
+    EngineVariable {
+        name: "ResolvedView.ClipToWorld",
+        var_type: "float4x4",
+        engine: "unreal",
+        detail: "float4x4 ResolvedView.ClipToWorld",
+        description: "### `ResolvedView.ClipToWorld`\n*Unreal Engine View Uniform*\n\nTransforms coordinates from Clip Space to World Space.",
+    },
+    EngineVariable {
+        name: "GetWorldPosition",
+        var_type: "function",
+        engine: "unreal",
+        detail: "float3 GetWorldPosition(FMaterialVertexParameters Parameters)",
+        description: "### `GetWorldPosition`\n*Unreal Engine Material Function*\n\nReturns the world position of the current vertex or pixel.",
+    },
+    EngineVariable {
+        name: "CalcPixelDepth",
+        var_type: "function",
+        engine: "unreal",
+        detail: "float CalcPixelDepth(FMaterialPixelParameters Parameters)",
+        description: "### `CalcPixelDepth`\n*Unreal Engine Material Function*\n\nCalculates camera-to-pixel depth in Unreal Units.",
+    },
+];

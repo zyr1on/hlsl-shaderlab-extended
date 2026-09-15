@@ -23,6 +23,80 @@ pub const STORAGE_QUALIFIERS: &[&str] = &[
     "column_major", "row_major", "precise", "groupshared",
 ];
 
+pub fn safe_floor_char_boundary(s: &str, mut index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    while index > 0 && !s.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+#[allow(dead_code)]
+pub fn char_col_to_byte_idx(s: &str, char_col: usize) -> usize {
+    s.char_indices()
+        .nth(char_col)
+        .map(|(idx, _)| idx)
+        .unwrap_or(s.len())
+}
+
+pub fn extract_word_at_pos(line: &str, col_idx: usize) -> &str {
+    if line.is_empty() {
+        return "";
+    }
+    let byte_pos = if col_idx >= line.len() {
+        line.len()
+    } else if line.is_char_boundary(col_idx) {
+        col_idx
+    } else {
+        safe_floor_char_boundary(line, col_idx)
+    };
+
+    let mut word_start = byte_pos;
+    for (i, c) in line[..byte_pos].char_indices().rev() {
+        if c.is_alphanumeric() || c == '_' {
+            word_start = i;
+        } else {
+            break;
+        }
+    }
+
+    let mut word_end = byte_pos;
+    for (i, c) in line[byte_pos..].char_indices() {
+        if c.is_alphanumeric() || c == '_' {
+            word_end = byte_pos + i + c.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    &line[word_start..word_end]
+}
+
+pub fn find_identifier_in_line(line: &str, ident: &str) -> Option<usize> {
+    for (idx, _) in line.match_indices(ident) {
+        let before_ok = if idx == 0 {
+            true
+        } else {
+            let prev = line[..idx].chars().next_back().unwrap_or(' ');
+            !prev.is_alphanumeric() && prev != '_'
+        };
+        let after_idx = idx + ident.len();
+        let after_ok = if after_idx >= line.len() {
+            true
+        } else {
+            let next = line[after_idx..].chars().next().unwrap_or(' ');
+            !next.is_alphanumeric() && next != '_'
+        };
+        if before_ok && after_ok {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+
 #[allow(dead_code)]
 pub const KNOWN_BASE_TYPES: &[&str] = &[
     "float", "float2", "float3", "float4",
@@ -455,7 +529,15 @@ pub fn scan_user_functions(
                 let mut parsed_params = Vec::new();
                 for p in &params {
                     if let Some(mut fp) = parse_parameter_decl(p, start_line, 0) {
-                        fp.col = text.lines().nth(fp.line).and_then(|l| l.find(&fp.name)).unwrap_or(0);
+                        for check_line in start_line..=line_idx {
+                            if let Some(l) = text.lines().nth(check_line) {
+                                if let Some(col) = find_identifier_in_line(l, &fp.name) {
+                                    fp.line = check_line;
+                                    fp.col = col;
+                                    break;
+                                }
+                            }
+                        }
                         parsed_params.push(fp);
                     }
                 }
@@ -515,18 +597,30 @@ pub fn scan_user_functions(
         }
 
         if !in_func_body && !line.starts_with("return") && !line.starts_with('#') {
-            if let Some(open_paren) = line.find('(') {
-                let before = line[..open_paren].trim();
+            let mut decl_line = line;
+            while decl_line.starts_with('[') {
+                if let Some(close_b) = decl_line.find(']') {
+                    decl_line = decl_line[close_b + 1..].trim();
+                } else {
+                    break;
+                }
+            }
+
+            if let Some(open_paren) = decl_line.find('(') {
+                let before = decl_line[..open_paren].trim();
                 let mut it = before.split_whitespace().rev();
                 if let (Some(fn_name), Some(return_type)) = (it.next(), it.next()) {
                     if is_valid_identifier(fn_name)
                         && !INVALID_NAMES.contains(&fn_name)
+                        && fn_name != "register"
+                        && fn_name != "packoffset"
+                        && is_valid_identifier(return_type)
                         && !INVALID_TYPES.contains(&return_type)
                     {
                         let col_idx = raw_line.find(fn_name).unwrap_or(0);
-                        if let Some(close_idx) = line.find(')') {
-                            let header = &line[..=close_idx];
-                            let params_part = &line[open_paren + 1..close_idx];
+                        if let Some(close_idx) = decl_line.find(')') {
+                            let header = &decl_line[..=close_idx];
+                            let params_part = &decl_line[open_paren + 1..close_idx];
                             let params: Vec<String> = params_part
                                 .split(',')
                                 .map(|p| p.trim().to_string())
@@ -536,7 +630,7 @@ pub fn scan_user_functions(
                             let mut parsed_params = Vec::new();
                             for p in &params {
                                 if let Some(mut fp) = parse_parameter_decl(p, line_idx, open_paren + 1) {
-                                    fp.col = raw_line.find(&fp.name).unwrap_or(open_paren + 1);
+                                    fp.col = find_identifier_in_line(raw_line, &fp.name).unwrap_or(open_paren + 1);
                                     parsed_params.push(fp);
                                 }
                             }
@@ -564,13 +658,13 @@ pub fn scan_user_functions(
                             });
                             pending_doc.clear();
 
-                            let rest = &line[close_idx..];
+                            let rest = &decl_line[close_idx..];
                             let open_b = rest.chars().filter(|&c| c == '{').count();
                             let close_b = rest.chars().filter(|&c| c == '}').count();
                             if open_b > close_b {
                                 in_func_body = true;
                                 func_brace_depth = open_b - close_b;
-                            } else if open_b == 0 && !line.ends_with(';') {
+                            } else if open_b == 0 && !decl_line.ends_with(';') {
                                 expecting_body = true;
                             }
                         } else {
@@ -580,7 +674,7 @@ pub fn scan_user_functions(
                                 return_type.to_string(),
                                 line_idx,
                                 col_idx,
-                                line.to_string(),
+                                decl_line.to_string(),
                             ));
                         }
                     }
@@ -617,12 +711,18 @@ pub fn scan_user_variables(
     source_name: Option<&str>,
     file_uri: Option<&str>,
 ) -> Vec<VariableSymbol> {
+    let funcs = scan_user_functions(text, None, None);
     let mut results = Vec::new();
     let mut pending_doc = Vec::new();
-    let mut brace_level: usize = 0;
+    let mut block_depth: usize = 0;
     let mut current_block: Option<(String, bool)> = None; // (name, is_cbuffer)
 
     for (line_idx, raw_line) in text.lines().enumerate() {
+        let is_in_func = funcs.iter().any(|f| line_idx >= f.body_start_line && line_idx <= f.body_end_line);
+        if is_in_func {
+            continue;
+        }
+
         let line = raw_line.trim();
 
         if line.starts_with("//") {
@@ -634,68 +734,107 @@ pub fn scan_user_variables(
         }
 
         if line.is_empty() {
-            if brace_level == 0 {
+            if current_block.is_none() {
                 pending_doc.clear();
             }
             continue;
         }
 
-        // cbuffer Name or struct Name
-        if line.starts_with("cbuffer ") || line.starts_with("struct ") {
+        // cbuffer Name, CBUFFER_START(Name), or struct Name
+        if (line.starts_with("cbuffer ") || line.starts_with("struct ")) && current_block.is_none() {
             let mut it = line.split_whitespace();
             let kw = it.next().unwrap_or("");
             if let Some(name_raw) = it.next() {
                 let name = name_raw.split(['{', ':']).next().unwrap_or("").trim();
                 if is_valid_identifier(name) {
                     current_block = Some((name.to_string(), kw == "cbuffer"));
+                    block_depth = 0;
                 }
             }
+        } else if (line.starts_with("CBUFFER_START(") || line.starts_with("CBUFFER_START ")) && current_block.is_none() {
+            let inner = line.trim_start_matches("CBUFFER_START").trim();
+            let name = inner.trim_matches(|c| c == '(' || c == ')' || c == ';' || c == '{').trim();
+            if is_valid_identifier(name) {
+                current_block = Some((name.to_string(), true));
+                block_depth = 0;
+            }
+        } else if line.starts_with("CBUFFER_END") {
+            current_block = None;
+            block_depth = 0;
         }
 
-        // Variable declaration ending with semicolon
-        if line.ends_with(';') && !line.starts_with('#') && !line.starts_with("return") {
-            let in_cbuffer = current_block.as_ref().map(|(_, is_cb)| *is_cb).unwrap_or(false);
-            // Only add variables declared at file root (brace_level == 0) or inside cbuffer
-            if brace_level == 0 || in_cbuffer {
-                let clean = line.trim_end_matches(';').trim();
-                let decl = clean.split('=').next().unwrap_or("").trim();
-                let tokens: Vec<&str> = decl.split_whitespace().collect();
-                if tokens.len() >= 2 {
-                    let var_name_raw = tokens.last().copied().unwrap_or("");
-                    let var_name = var_name_raw.split([':', '[']).next().unwrap_or("").trim();
-                    let var_type = tokens[tokens.len() - 2].split([':', '<']).next().unwrap_or("").trim();
-
-                    if is_valid_identifier(var_name) && !INVALID_NAMES.contains(&var_name) {
+        // Texture/Sampler macros: TEXTURE2D(_BaseMap); SAMPLER(sampler_BaseMap);
+        if (line.starts_with("TEXTURE2D") || line.starts_with("TEXTURE3D") || line.starts_with("TEXTURECUBE") || line.starts_with("SAMPLER")) && line.ends_with(';') {
+            let open = line.find('(');
+            let close = line.find(')');
+            if let (Some(o), Some(c)) = (open, close) {
+                if c > o + 1 {
+                    let var_name = line[o + 1..c].trim();
+                    let macro_type = line[..o].trim();
+                    if is_valid_identifier(var_name) {
                         let col = raw_line.find(var_name).unwrap_or(0);
-                        let doc = if pending_doc.is_empty() { None } else { Some(pending_doc.join(" ")) };
-                        let qualifier = if in_cbuffer {
-                            current_block.as_ref().map(|(cb, _)| format!("cbuffer {cb}")).unwrap_or_default()
-                        } else {
-                            String::new()
-                        };
                         results.push(VariableSymbol {
                             name: var_name.to_string(),
-                            var_type: var_type.to_string(),
-                            qualifier,
-                            doc,
-                            source: source_name.map(|s| s.to_string()),
+                            var_type: macro_type.to_string(),
+                            qualifier: "uniform".to_string(),
+                            doc: if pending_doc.is_empty() { None } else { Some(pending_doc.join(" ")) },
                             line: line_idx,
                             col,
-                            file_uri: file_uri.map(|s| s.to_string()),
+                            source: source_name.map(|s| s.to_string()),
+                            file_uri: file_uri.map(String::from),
                         });
                     }
                 }
             }
         }
 
-        for b in line.bytes() {
-            if b == b'{' {
-                brace_level += 1;
-            } else if b == b'}' {
-                brace_level = brace_level.saturating_sub(1);
-                if brace_level == 0 {
-                    current_block = None;
+        let in_cbuffer = current_block.as_ref().map(|(_, is_cb)| *is_cb).unwrap_or(false);
+        let in_struct = current_block.as_ref().map(|(_, is_cb)| !*is_cb).unwrap_or(false);
+
+        let code_part = line.split("//").next().unwrap_or("").trim();
+
+        // Variable declaration ending with semicolon
+        if code_part.ends_with(';') && !code_part.starts_with('#') && !code_part.starts_with("return") && !in_struct {
+            let clean = code_part.trim_end_matches(';').trim();
+            let decl = clean.split('=').next().unwrap_or("").trim();
+            let before_colon = decl.split(':').next().unwrap_or("").trim();
+            let tokens: Vec<&str> = before_colon.split_whitespace().collect();
+            if tokens.len() >= 2 {
+                let var_name_raw = tokens.last().copied().unwrap_or("");
+                let var_name = var_name_raw.split('[').next().unwrap_or("").trim();
+                let var_type = tokens[tokens.len() - 2].split('<').next().unwrap_or("").trim();
+
+                if is_valid_identifier(var_name) && !INVALID_NAMES.contains(&var_name) {
+                    let col = raw_line.find(var_name).unwrap_or(0);
+                    let doc = if pending_doc.is_empty() { None } else { Some(pending_doc.join(" ")) };
+                    let qualifier = if in_cbuffer {
+                        current_block.as_ref().map(|(cb, _)| format!("cbuffer {cb}")).unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    results.push(VariableSymbol {
+                        name: var_name.to_string(),
+                        var_type: var_type.to_string(),
+                        qualifier,
+                        doc,
+                        source: source_name.map(|s| s.to_string()),
+                        line: line_idx,
+                        col,
+                        file_uri: file_uri.map(|s| s.to_string()),
+                    });
                 }
+            }
+        }
+
+        let open_b = code_part.chars().filter(|&c| c == '{').count();
+        let close_b = code_part.chars().filter(|&c| c == '}').count();
+        if current_block.is_some() {
+            block_depth += open_b;
+            if block_depth > 0 && block_depth <= close_b {
+                current_block = None;
+                block_depth = 0;
+            } else {
+                block_depth = block_depth.saturating_sub(close_b);
             }
         }
 
@@ -707,52 +846,135 @@ pub fn scan_user_variables(
     results
 }
 
-/// Resolves #include directives recursively and collects user functions & symbols.
+///// Resolves #include directives recursively and collects user functions, symbols & structs.
 pub fn resolve_includes_and_scan_symbols(
     uri: &str,
     doc_content: &str,
     doc_cache: &HashMap<String, String>,
-) -> (Vec<FunctionSignature>, Vec<VariableSymbol>) {
+) -> (Vec<FunctionSignature>, Vec<VariableSymbol>, Vec<StructDef>) {
     let mut all_functions = Vec::new();
     let mut all_variables = Vec::new();
+    let mut all_structs = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(uri.to_string());
 
     // Scan the current active document first
     all_functions.extend(scan_user_functions(doc_content, None, Some(uri)));
     all_variables.extend(scan_user_variables(doc_content, None, Some(uri)));
+    all_structs.extend(scan_struct_definitions_with_uri(doc_content, Some(uri)));
 
-    // Parse #include directives
-    let main_path = uri_to_path(uri);
-    let main_dir = main_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf());
+    let mut queue = vec![(uri.to_string(), doc_content.to_string(), 0usize)];
 
-    for line in doc_content.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("#include") {
-            let include_target = rest.trim().trim_matches(|c| c == '"' || c == '<' || c == '>');
-            if include_target.is_empty() {
-                continue;
-            }
+    while let Some((curr_uri, curr_content, depth)) = queue.pop() {
+        if depth >= 8 {
+            continue;
+        }
 
-            // Try to resolve path
-            if let Some(dir) = &main_dir {
-                let candidate = dir.join(include_target);
-                if candidate.is_file() {
-                    let inc_uri = path_to_uri(&candidate);
-                    let content = doc_cache
-                        .get(&inc_uri)
-                        .cloned()
-                        .or_else(|| std::fs::read_to_string(&candidate).ok());
+        let curr_path = uri_to_path(&curr_uri);
+        let curr_dir = curr_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf());
 
-                    if let Some(inc_content) = content {
-                        let inc_name = candidate.file_name().and_then(|n| n.to_str()).unwrap_or(include_target);
-                        all_functions.extend(scan_user_functions(&inc_content, Some(inc_name), Some(&inc_uri)));
-                        all_variables.extend(scan_user_variables(&inc_content, Some(inc_name), Some(&inc_uri)));
+        for line in curr_content.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("#include") {
+                let include_target = rest.trim().trim_matches(|c| c == '"' || c == '<' || c == '>');
+                if include_target.is_empty() {
+                    continue;
+                }
+
+                let mut found_candidate: Option<(std::path::PathBuf, String)> = None;
+
+                // 1. Check relative to current file in doc_cache first, then on disk
+                if let Some(dir) = &curr_dir {
+                    let candidate = dir.join(include_target);
+                    let cand_uri = path_to_uri(&candidate);
+                    if doc_cache.contains_key(&cand_uri) {
+                        found_candidate = Some((candidate, cand_uri));
+                    } else if candidate.is_file() {
+                        found_candidate = Some((candidate.clone(), cand_uri));
+                    }
+                }
+
+                // 2. Check doc_cache by filename/suffix match (for unsaved buffers or virtual URIs)
+                if found_candidate.is_none() {
+                    let target_suffix = format!("/{}", include_target.replace('\\', "/"));
+                    for k in doc_cache.keys() {
+                        if k.ends_with(&target_suffix) || k.ends_with(include_target) {
+                            let path = uri_to_path(k).unwrap_or_else(|| std::path::PathBuf::from(include_target));
+                            found_candidate = Some((path, k.clone()));
+                            break;
+                        }
+                    }
+                }
+
+                // 3. Check search paths on disk
+                if found_candidate.is_none() {
+                    let search_paths = crate::discover_include_paths(&curr_uri, None);
+                    for sp in &search_paths {
+                        let direct = sp.join(include_target);
+                        if direct.is_file() {
+                            let uri = path_to_uri(&direct);
+                            found_candidate = Some((direct, uri));
+                            break;
+                        }
+
+                        // Handle Unity Packages/com.unity... mapped to Library/PackageCache
+                        let lower_target = include_target.to_lowercase();
+                        if lower_target.starts_with("packages/") {
+                            let pkg_sub = &include_target[9..];
+                            let cache_dir = if sp.ends_with("PackageCache") {
+                                Some(sp.clone())
+                            } else if sp.join("Library").join("PackageCache").is_dir() {
+                                Some(sp.join("Library").join("PackageCache"))
+                            } else {
+                                None
+                            };
+
+                            if let Some(pcd) = cache_dir {
+                                if let Some((pkg_name, inner)) = pkg_sub.split_once('/') {
+                                    if let Ok(entries) = std::fs::read_dir(&pcd) {
+                                        for entry in entries.flatten() {
+                                            let file_name = entry.file_name().to_string_lossy().to_string();
+                                            if file_name.starts_with(pkg_name) && file_name.contains('@') {
+                                                let cand = entry.path().join(inner);
+                                                if cand.is_file() {
+                                                    let uri = path_to_uri(&cand);
+                                                    found_candidate = Some((cand, uri));
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if found_candidate.is_some() {
+                            break;
+                        }
+                    }
+                }
+
+                if let Some((candidate, inc_uri)) = found_candidate {
+                    if visited.insert(inc_uri.clone()) {
+                        let content = doc_cache
+                            .get(&inc_uri)
+                            .cloned()
+                            .or_else(|| std::fs::read_to_string(&candidate).ok());
+
+                        if let Some(inc_content) = content {
+                            let inc_name = candidate.file_name().and_then(|n| n.to_str()).unwrap_or(include_target);
+                            all_functions.extend(scan_user_functions(&inc_content, Some(inc_name), Some(&inc_uri)));
+                            all_variables.extend(scan_user_variables(&inc_content, Some(inc_name), Some(&inc_uri)));
+                            all_structs.extend(scan_struct_definitions_with_uri(&inc_content, Some(&inc_uri)));
+                            queue.push((inc_uri, inc_content, depth + 1));
+                        }
                     }
                 }
             }
         }
     }
 
-    (all_functions, all_variables)
+    (all_functions, all_variables, all_structs)
 }
 
 /// Handles textDocument/signatureHelp requests.
@@ -763,12 +985,21 @@ pub fn get_signature_help(
     col_idx: usize,
     doc_cache: &HashMap<String, String>,
 ) -> Value {
-    let (fn_name, active_param) = match find_enclosing_call(doc_content, line_idx, col_idx) {
-        Some(res) => res,
+    let call_info = find_enclosing_call(doc_content, line_idx, col_idx)
+        .or_else(|| {
+            if col_idx > 0 {
+                find_enclosing_call(doc_content, line_idx, col_idx - 1)
+            } else {
+                None
+            }
+        });
+
+    let (fn_name, active_param) = match call_info {
+        Some((name, param)) => (name, param),
         None => return json!(null),
     };
 
-    // 0. ShaderLab Built-in Property Signatures (e.g. Range(min, max))
+    // 0. Unity ShaderLab Built-in Property Types (Range)
     if fn_name == "Range" {
         return json!({
             "signatures": [{
@@ -787,19 +1018,27 @@ pub fn get_signature_help(
         });
     }
 
-    // 1. Built-in HLSL Intrinsics (Microsoft reference)
-    if let Some(builtin) = docs::find_builtin_function(&fn_name) {
-        let signatures: Vec<Value> = builtin
-            .overloads
+    let (user_funcs, _, _) = resolve_includes_and_scan_symbols(uri, doc_content, doc_cache);
+    let builtin_doc = docs::find_builtin_function(&fn_name);
+
+    // 1. Current Active Document Functions (User's Code - Highest Priority!)
+    let current_file_matches: Vec<&FunctionSignature> = user_funcs
+        .iter()
+        .filter(|f| f.name == fn_name && (f.source.is_none() || f.file_uri.as_deref() == Some(uri)))
+        .collect();
+
+    if !current_file_matches.is_empty() {
+        let signatures: Vec<Value> = current_file_matches
             .iter()
-            .map(|ol| {
-                let params: Vec<Value> = ol.params.iter().map(|p| json!({ "label": *p })).collect();
+            .map(|f| {
+                let params: Vec<Value> = f.parameters.iter().map(|p| json!({ "label": p })).collect();
+                let doc_val = f.doc.as_deref().unwrap_or("");
                 json!({
-                    "label": ol.label,
+                    "label": f.label,
                     "parameters": params,
                     "documentation": {
                         "kind": "markdown",
-                        "value": builtin.description
+                        "value": doc_val
                     }
                 })
             })
@@ -812,22 +1051,57 @@ pub fn get_signature_help(
         });
     }
 
-    // 2. User-defined functions
-    let (user_funcs, _) = resolve_includes_and_scan_symbols(uri, doc_content, doc_cache);
-    let matches: Vec<&FunctionSignature> = user_funcs.iter().filter(|f| f.name == fn_name).collect();
+    // 2. Included Header Functions (From #include files, enriched with rich docs if available!)
+    let include_matches: Vec<&FunctionSignature> = user_funcs
+        .iter()
+        .filter(|f| f.name == fn_name && f.source.is_some() && f.file_uri.as_deref() != Some(uri))
+        .collect();
 
-    if !matches.is_empty() {
-        let signatures: Vec<Value> = matches
+    if !include_matches.is_empty() {
+        let signatures: Vec<Value> = include_matches
             .iter()
             .map(|f| {
                 let params: Vec<Value> = f.parameters.iter().map(|p| json!({ "label": p })).collect();
-                let doc_val = f.doc.as_deref().unwrap_or("");
+                let src_info = f.source.as_ref().map(|s| format!("*(Defined in `{}`)*\n\n", s)).unwrap_or_default();
+                let doc_val = if let Some(ref d) = f.doc {
+                    format!("{}{}", src_info, d)
+                } else if let Some(bi) = builtin_doc {
+                    format!("{}{}", src_info, bi.description)
+                } else {
+                    src_info
+                };
+
                 json!({
                     "label": f.label,
                     "parameters": params,
                     "documentation": {
                         "kind": "markdown",
                         "value": doc_val
+                    }
+                })
+            })
+            .collect();
+
+        return json!({
+            "signatures": signatures,
+            "activeSignature": 0,
+            "activeParameter": active_param
+        });
+    }
+
+    // 3. Built-in HLSL Intrinsics & Engine Helpers (Fallback if not found in code or includes)
+    if let Some(builtin) = builtin_doc {
+        let signatures: Vec<Value> = builtin
+            .overloads
+            .iter()
+            .map(|ol| {
+                let params: Vec<Value> = ol.params.iter().map(|p| json!({ "label": *p })).collect();
+                json!({
+                    "label": ol.label,
+                    "parameters": params,
+                    "documentation": {
+                        "kind": "markdown",
+                        "value": builtin.description
                     }
                 })
             })
@@ -856,31 +1130,35 @@ pub fn get_hover_info(
         None => return json!(null),
     };
 
-    let safe_col = col_idx.min(line.len());
-    let mut word_start = safe_col;
-    for (i, c) in line[..safe_col].char_indices().rev() {
-        if c.is_alphanumeric() || c == '_' {
-            word_start = i;
-        } else {
-            break;
-        }
-    }
-
-    let mut word_end = safe_col;
-    for (i, c) in line[safe_col..].char_indices() {
-        if c.is_alphanumeric() || c == '_' {
-            word_end = safe_col + i + c.len_utf8();
-        } else {
-            break;
-        }
-    }
-
-    let word = &line[word_start..word_end];
+    let word = extract_word_at_pos(line, col_idx);
     if word.is_empty() {
         return json!(null);
     }
 
-    // 1. Built-in HLSL Intrinsics (Microsoft reference)
+    let (user_funcs, user_vars, user_structs) = resolve_includes_and_scan_symbols(uri, doc_content, doc_cache);
+
+    // 1. Local scope inside enclosing function takes highest precedence!
+    // (Prevents parameters/locals named 'distance' or 'saturate' from being shadowed by intrinsics)
+    if let Some(f) = find_enclosing_function(&user_funcs, line_idx) {
+        if let Some(p) = f.parsed_params.iter().find(|p| p.name == word) {
+            return json!({
+                "contents": {
+                    "kind": "markdown",
+                    "value": format!("```hlsl\n{} {}\n```\n*(parameter of `{}`)*", p.param_type, p.name, f.name)
+                }
+            });
+        }
+        if let Some(v) = f.local_vars.iter().find(|v| v.name == word) {
+            return json!({
+                "contents": {
+                    "kind": "markdown",
+                    "value": format!("```hlsl\n{} {}\n```\n*(local variable in `{}`)*", v.var_type, v.name, f.name)
+                }
+            });
+        }
+    }
+
+    // 2. Built-in HLSL Intrinsics (Microsoft reference)
     if let Some(builtin) = docs::find_builtin_function(word) {
         let mut overloads_str = String::new();
         for ol in builtin.overloads {
@@ -902,7 +1180,7 @@ pub fn get_hover_info(
         });
     }
 
-    // 2. Built-in Semantics
+    // 3. Built-in Semantics
     if let Some((_, desc)) = docs::BUILTIN_VARIABLES.iter().find(|(name, _)| *name == word) {
         return json!({
             "contents": {
@@ -912,28 +1190,17 @@ pub fn get_hover_info(
         });
     }
 
-    // 3. User-defined functions & variables in current scope (Parameters & Locals first)
-    let (user_funcs, user_vars) = resolve_includes_and_scan_symbols(uri, doc_content, doc_cache);
-
-    if let Some(f) = find_enclosing_function(&user_funcs, line_idx) {
-        if let Some(p) = f.parsed_params.iter().find(|p| p.name == word) {
-            return json!({
-                "contents": {
-                    "kind": "markdown",
-                    "value": format!("```hlsl\n{} {}\n```\n*(parameter of `{}`)*", p.param_type, p.name, f.name)
-                }
-            });
-        }
-        if let Some(v) = f.local_vars.iter().find(|v| v.name == word) {
-            return json!({
-                "contents": {
-                    "kind": "markdown",
-                    "value": format!("```hlsl\n{} {}\n```\n*(local variable in `{}`)*", v.var_type, v.name, f.name)
-                }
-            });
-        }
+    // 4. Engine Built-in Variables & Functions (_Time, unity_ObjectToWorld, TransformObjectToHClip, etc.)
+    if let Some(ev) = docs::find_engine_variable(word) {
+        return json!({
+            "contents": {
+                "kind": "markdown",
+                "value": format!("```hlsl\n{}\n```\n\n{}", ev.detail, ev.description)
+            }
+        });
     }
 
+    // 5. User-defined functions
     if let Some(func) = user_funcs.iter().find(|f| f.name == word) {
         let doc_part = func.doc.as_deref().map(|d| format!("\n\n{d}")).unwrap_or_default();
         return json!({
@@ -944,12 +1211,43 @@ pub fn get_hover_info(
         });
     }
 
+    // 6. User-defined variables & CBuffer members
     if let Some(var) = user_vars.iter().find(|v| v.name == word) {
         let doc_part = var.doc.as_deref().map(|d| format!("\n\n{d}")).unwrap_or_default();
         return json!({
             "contents": {
                 "kind": "markdown",
                 "value": format!("```hlsl\n{} {}\n```{doc_part}", var.var_type, var.name).trim().to_string()
+            }
+        });
+    }
+
+    // 7. Struct Definitions (including structs declared in #included files)
+    if let Some(s) = user_structs.iter().find(|s| s.name == word) {
+        let mut fields_str = String::new();
+        for f in &s.fields {
+            fields_str.push_str(&format!("    {} {};\n", f.field_type, f.name));
+        }
+        return json!({
+            "contents": {
+                "kind": "markdown",
+                "value": format!("```hlsl\nstruct {}\n{{\n{}}};\n```", s.name, fields_str)
+            }
+        });
+    }
+
+    // 8. ShaderLab Properties hover
+    let props = scan_shaderlab_properties(doc_content);
+    if let Some(p) = props.iter().find(|p| p.name == word) {
+        let def_str = if p.default_val.is_empty() {
+            "".to_string()
+        } else {
+            format!(" = {}", p.default_val)
+        };
+        return json!({
+            "contents": {
+                "kind": "markdown",
+                "value": format!("### `{}` ({})\n*ShaderLab Property*\n\nDisplay Name: **\"{}\"**\nDefault: `{}`", p.name, p.prop_type, p.display_name, def_str.trim_start_matches(" = "))
             }
         });
     }
@@ -968,9 +1266,21 @@ pub fn handle_definition(msg: &Value, doc_cache: &HashMap<String, String>) -> Va
     let line_idx = params["position"]["line"].as_u64().unwrap_or(0) as usize;
     let col_idx = params["position"]["character"].as_u64().unwrap_or(0) as usize;
 
+    let owned_doc;
     let doc = match doc_cache.get(uri) {
-        Some(d) => d,
-        None => return Value::Null,
+        Some(d) => d.as_str(),
+        None => {
+            if let Some(p) = uri_to_path(uri) {
+                if let Ok(content) = std::fs::read_to_string(p) {
+                    owned_doc = content;
+                    owned_doc.as_str()
+                } else {
+                    return Value::Null;
+                }
+            } else {
+                return Value::Null;
+            }
+        }
     };
 
     let line = match doc.lines().nth(line_idx) {
@@ -981,12 +1291,29 @@ pub fn handle_definition(msg: &Value, doc_cache: &HashMap<String, String>) -> Va
     // Check if clicking on #include "file.hlsl"
     if let Some(rest) = line.trim().strip_prefix("#include") {
         let inc_name = rest.trim().trim_matches(|c| c == '"' || c == '<' || c == '>');
-        if let Some(main_path) = uri_to_path(uri) {
-            if let Some(parent) = main_path.parent() {
-                let candidate = parent.join(inc_name);
-                if candidate.is_file() {
+        if !inc_name.is_empty() {
+            if let Some(main_path) = uri_to_path(uri) {
+                if let Some(parent) = main_path.parent() {
+                    let candidate = parent.join(inc_name);
+                    let cand_uri = path_to_uri(&candidate);
+                    if doc_cache.contains_key(&cand_uri) || candidate.is_file() {
+                        return json!({
+                            "uri": cand_uri,
+                            "range": {
+                                "start": { "line": 0, "character": 0 },
+                                "end": { "line": 0, "character": 0 }
+                            }
+                        });
+                    }
+                }
+            }
+
+            // Check doc_cache by suffix
+            let target_suffix = format!("/{}", inc_name.replace('\\', "/"));
+            for k in doc_cache.keys() {
+                if k.ends_with(&target_suffix) || k.ends_with(inc_name) {
                     return json!({
-                        "uri": path_to_uri(&candidate),
+                        "uri": k,
                         "range": {
                             "start": { "line": 0, "character": 0 },
                             "end": { "line": 0, "character": 0 }
@@ -997,31 +1324,12 @@ pub fn handle_definition(msg: &Value, doc_cache: &HashMap<String, String>) -> Va
         }
     }
 
-    let max_col = col_idx.min(line.len());
-    let mut word_start = max_col;
-    for (i, c) in line[..max_col].char_indices().rev() {
-        if c.is_alphanumeric() || c == '_' {
-            word_start = i;
-        } else {
-            break;
-        }
-    }
-
-    let mut word_end = max_col;
-    for (i, c) in line[max_col..].char_indices() {
-        if c.is_alphanumeric() || c == '_' {
-            word_end = max_col + i + c.len_utf8();
-        } else {
-            break;
-        }
-    }
-
-    let word = &line[word_start..word_end];
+    let word = extract_word_at_pos(line, col_idx);
     if word.is_empty() {
         return Value::Null;
     }
 
-    let (user_funcs, user_vars) = resolve_includes_and_scan_symbols(uri, doc, doc_cache);
+    let (user_funcs, user_vars, user_structs) = resolve_includes_and_scan_symbols(uri, doc, doc_cache);
 
     // Check parameters & local variables in current function scope first
     if let Some(f) = find_enclosing_function(&user_funcs, line_idx) {
@@ -1069,6 +1377,17 @@ pub fn handle_definition(msg: &Value, doc_cache: &HashMap<String, String>) -> Va
         });
     }
 
+    if let Some(s) = user_structs.iter().find(|s| s.name == word) {
+        let target_uri = s.file_uri.as_deref().unwrap_or(uri);
+        return json!({
+            "uri": target_uri,
+            "range": {
+                "start": { "line": s.line, "character": s.col },
+                "end": { "line": s.line, "character": s.col + s.name.len() }
+            }
+        });
+    }
+
     Value::Null
 }
 
@@ -1082,47 +1401,167 @@ pub struct StructField {
 pub struct StructDef {
     pub name: String,
     pub fields: Vec<StructField>,
+    pub line: usize,
+    pub col: usize,
+    pub file_uri: Option<String>,
 }
 
-/// Parses all structs and cbuffers and their member fields from HLSL source code.
-pub fn scan_struct_definitions(text: &str) -> Vec<StructDef> {
-    let mut structs = Vec::new();
-    let mut current_struct: Option<(String, Vec<StructField>)> = None;
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShaderLabProperty {
+    pub name: String,
+    pub display_name: String,
+    pub prop_type: String,
+    pub default_val: String,
+    pub line: usize,
+    pub col: usize,
+}
+
+pub fn scan_shaderlab_properties(text: &str) -> Vec<ShaderLabProperty> {
+    let mut properties = Vec::new();
+    let mut in_properties = false;
     let mut brace_depth = 0;
 
-    for line in text.lines() {
-        let trimmed = line.trim();
+    for (line_idx, raw_line) in text.lines().enumerate() {
+        let trimmed = raw_line.trim();
 
         if trimmed.starts_with("//") {
             continue;
         }
 
-        // struct Name or cbuffer Name
-        if (trimmed.starts_with("struct ") || trimmed.starts_with("cbuffer ")) && current_struct.is_none() {
-            let mut parts = trimmed.split_whitespace();
-            parts.next(); // "struct" or "cbuffer"
-            if let Some(name_raw) = parts.next() {
-                let name = name_raw.split(['{', ':', ';']).next().unwrap_or("").trim();
-                if is_valid_identifier(name) {
-                    current_struct = Some((name.to_string(), Vec::new()));
-                }
-            }
+        if trimmed.starts_with("Properties") && !in_properties {
+            in_properties = true;
+            brace_depth = 0;
         }
 
         let open_b = trimmed.chars().filter(|&c| c == '{').count();
         let close_b = trimmed.chars().filter(|&c| c == '}').count();
 
+        if in_properties {
+            brace_depth += open_b;
+
+            if brace_depth > 0 && !trimmed.starts_with("Properties") && !trimmed.starts_with('{') && !trimmed.starts_with('}') {
+                let mut without_attr = trimmed;
+                while without_attr.starts_with('[') {
+                    if let Some(end_bracket) = without_attr.find(']') {
+                        without_attr = without_attr[end_bracket + 1..].trim();
+                    } else {
+                        break;
+                    }
+                }
+
+                if let Some(paren_idx) = without_attr.find('(') {
+                    let name = without_attr[..paren_idx].trim();
+                    if is_valid_identifier(name) {
+                        let col = raw_line.find(name).unwrap_or(0);
+                        let after_paren = &without_attr[paren_idx + 1..];
+
+                        // Extract display name between quotes
+                        if let Some(first_quote) = after_paren.find('"') {
+                            if let Some(second_quote) = after_paren[first_quote + 1..].find('"') {
+                                let display_end = first_quote + 1 + second_quote;
+                                let display = &after_paren[first_quote + 1..display_end];
+                                let after_display = &after_paren[display_end + 1..];
+
+                                if let Some(comma_idx) = after_display.find(',') {
+                                    let rest = after_display[comma_idx + 1..].trim();
+                                    // Parse property type, correctly balancing parentheses for Range(min, max)
+                                    let mut paren_count = 0;
+                                    let mut type_end = rest.len();
+                                    for (idx, ch) in rest.char_indices() {
+                                        if ch == '(' {
+                                            paren_count += 1;
+                                        } else if ch == ')' {
+                                            if paren_count == 0 {
+                                                type_end = idx;
+                                                break;
+                                            } else {
+                                                paren_count -= 1;
+                                            }
+                                        }
+                                    }
+                                    let p_type = rest[..type_end].trim();
+                                    let after_type = if type_end < rest.len() { rest[type_end + 1..].trim() } else { "" };
+                                    let def_val = after_type.strip_prefix('=').map(|s| s.trim()).unwrap_or("");
+
+                                    properties.push(ShaderLabProperty {
+                                        name: name.to_string(),
+                                        display_name: display.to_string(),
+                                        prop_type: p_type.to_string(),
+                                        default_val: def_val.to_string(),
+                                        line: line_idx,
+                                        col,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if brace_depth > 0 && brace_depth <= close_b {
+                in_properties = false;
+                brace_depth = 0;
+            } else {
+                brace_depth = brace_depth.saturating_sub(close_b);
+            }
+        }
+    }
+
+    properties
+}
+
+/// Parses all structs and cbuffers and their member fields from HLSL source code.
+#[allow(dead_code)]
+pub fn scan_struct_definitions(text: &str) -> Vec<StructDef> {
+    scan_struct_definitions_with_uri(text, None)
+}
+
+pub fn scan_struct_definitions_with_uri(text: &str, file_uri: Option<&str>) -> Vec<StructDef> {
+    let mut structs = Vec::new();
+    let mut current_struct: Option<(String, Vec<StructField>, usize, usize)> = None;
+    let mut struct_brace_depth = 0;
+
+    for (line_idx, raw_line) in text.lines().enumerate() {
+        let trimmed = raw_line.trim();
+        let code_part = trimmed.split("//").next().unwrap_or("").trim();
+
+        if code_part.is_empty() {
+            continue;
+        }
+
+        // struct Name or cbuffer Name
+        if (code_part.starts_with("struct ") || code_part.starts_with("cbuffer ")) && current_struct.is_none() {
+            if code_part.ends_with(';') && !code_part.contains('{') {
+                continue;
+            }
+            let mut parts = code_part.split_whitespace();
+            parts.next(); // "struct" or "cbuffer"
+            if let Some(name_raw) = parts.next() {
+                let name = name_raw.split(['{', ':', ';']).next().unwrap_or("").trim();
+                if is_valid_identifier(name) {
+                    let col = raw_line.find(name).unwrap_or(0);
+                    current_struct = Some((name.to_string(), Vec::new(), line_idx, col));
+                    struct_brace_depth = 0;
+                }
+            }
+        }
+
+        let open_b = code_part.chars().filter(|&c| c == '{').count();
+        let close_b = code_part.chars().filter(|&c| c == '}').count();
+
         if current_struct.is_some() {
-            if brace_depth > 0 && trimmed.ends_with(';') {
+            struct_brace_depth += open_b;
+
+            if struct_brace_depth > 0 && code_part.ends_with(';') {
                 // e.g. "float4 position : SV_Position;" or "float4 color : COLOR;"
-                let decl = trimmed.trim_end_matches(';').trim();
+                let decl = code_part.trim_end_matches(';').trim();
                 let before_colon = decl.split(':').next().unwrap_or("").trim();
                 let tokens: Vec<&str> = before_colon.split_whitespace().collect();
                 if tokens.len() >= 2 {
-                    let field_name = tokens.last().unwrap().split('[').next().unwrap_or("").trim();
+                    let field_name = tokens[tokens.len() - 1].split('[').next().unwrap_or("").trim();
                     let field_type = tokens[tokens.len() - 2].split('<').next().unwrap_or("").trim();
                     if is_valid_identifier(field_name) {
-                        if let Some((_, ref mut fields)) = current_struct {
+                        if let Some((_, ref mut fields, _, _)) = current_struct {
                             fields.push(StructField {
                                 name: field_name.to_string(),
                                 field_type: field_type.to_string(),
@@ -1132,18 +1571,31 @@ pub fn scan_struct_definitions(text: &str) -> Vec<StructDef> {
                 }
             }
 
-            if close_b > 0 && brace_depth + open_b <= close_b {
-                if let Some((name, fields)) = current_struct.take() {
-                    structs.push(StructDef { name, fields });
+            if struct_brace_depth > 0 && struct_brace_depth <= close_b {
+                if let Some((name, fields, line, col)) = current_struct.take() {
+                    structs.push(StructDef {
+                        name,
+                        fields,
+                        line,
+                        col,
+                        file_uri: file_uri.map(|s| s.to_string()),
+                    });
                 }
+                struct_brace_depth = 0;
+            } else {
+                struct_brace_depth = struct_brace_depth.saturating_sub(close_b);
             }
         }
-
-        brace_depth = (brace_depth + open_b).saturating_sub(close_b);
     }
 
-    if let Some((name, fields)) = current_struct {
-        structs.push(StructDef { name, fields });
+    if let Some((name, fields, line, col)) = current_struct {
+        structs.push(StructDef {
+            name,
+            fields,
+            line,
+            col,
+            file_uri: file_uri.map(|s| s.to_string()),
+        });
     }
 
     structs
@@ -1199,7 +1651,7 @@ pub fn infer_variable_type(text: &str, var_name: &str, cursor_line: usize) -> Op
                     let param_clean = param.split(':').next().unwrap_or("").trim();
                     let tokens: Vec<&str> = param_clean.split_whitespace().collect();
                     if tokens.len() >= 2 {
-                        let p_name = tokens.last().unwrap().trim();
+                        let p_name = tokens[tokens.len() - 1].trim();
                         let p_type = tokens[tokens.len() - 2].trim();
                         if p_name == var_name && is_valid_identifier(p_type) {
                             return Some(p_type.to_string());
@@ -1261,10 +1713,26 @@ pub fn get_document_symbols(text: &str) -> Value {
                 },
                 "selectionRange": {
                     "start": { "line": line_idx, "character": 0 },
-                    "end": { "line": line_idx, "character": line.len() }
                 }
             }));
         }
+    }
+
+    // 1b. Scan ShaderLab Properties
+    for p in scan_shaderlab_properties(text) {
+        symbols.push(json!({
+            "name": p.name,
+            "detail": format!("{} ({})", p.prop_type, p.display_name),
+            "kind": 7, // Property
+            "range": {
+                "start": { "line": p.line, "character": p.col },
+                "end": { "line": p.line, "character": p.col + p.name.len() }
+            },
+            "selectionRange": {
+                "start": { "line": p.line, "character": p.col },
+                "end": { "line": p.line, "character": p.col + p.name.len() }
+            }
+        }));
     }
 
     // 2. Scan structs & cbuffers
@@ -1296,7 +1764,7 @@ pub fn get_document_symbols(text: &str) -> Value {
                             let before_colon = decl.split(':').next().unwrap_or("").trim();
                             let tokens: Vec<&str> = before_colon.split_whitespace().collect();
                             if tokens.len() >= 2 {
-                                let f_name = tokens.last().unwrap().split('[').next().unwrap_or("").trim();
+                                let f_name = tokens[tokens.len() - 1].split('[').next().unwrap_or("").trim();
                                 let f_type = tokens[tokens.len() - 2].split('<').next().unwrap_or("").trim();
                                 if is_valid_identifier(f_name) {
                                     children.push(json!({

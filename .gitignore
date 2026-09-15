@@ -1,7 +1,29 @@
+# Target directories
 /target/
 **/target/
+hlsl_validator/target/
+
+# WASM build outputs
+*.wasm
+extension.wasm
+
+# Pre-built local binaries & archives
+bin/
+*.zip
+*.tar.gz
+
+# Cargo lock files (libraries / extensions usually ignore them)
+*.lock
+
+# Zed auto-generated files
+grammars/
+
+# Temporary files and logs
+*.tmp
+*.log
 **/*.rs.bk
 *.pdb
 *.obj
 .DS_Store
 Thumbs.db
+

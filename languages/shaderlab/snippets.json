@@ -85,5 +85,80 @@
       "}"
     ],
     "description": "ShaderLab Properties block"
+  },
+  "UsePass": {
+    "prefix": "usepass",
+    "body": [
+      "UsePass \"${1:Shader/PASSNAME}\""
+    ],
+    "description": "Inserts named pass from another shader"
+  },
+  "GrabPass": {
+    "prefix": "grabpass",
+    "body": [
+      "GrabPass { \"${1:_BackgroundTexture}\" }"
+    ],
+    "description": "Captures screen buffer into texture"
+  },
+  "Stencil Block": {
+    "prefix": "stencil",
+    "body": [
+      "Stencil",
+      "{",
+      "\tRef ${1:1}",
+      "\tComp ${2:Always}",
+      "\tPass ${3:Replace}",
+      "}"
+    ],
+    "description": "ShaderLab Stencil buffer block"
+  },
+  "ZWrite": {
+    "prefix": "zwrite",
+    "body": [
+      "ZWrite ${1|On,Off|}"
+    ],
+    "description": "Controls depth buffer write"
+  },
+  "ZTest": {
+    "prefix": "ztest",
+    "body": [
+      "ZTest ${1|LEqual,Always,Equal,Less,Greater,GEqual,NotEqual,Off|}"
+    ],
+    "description": "Controls depth testing mode"
+  },
+  "ZClip": {
+    "prefix": "zclip",
+    "body": [
+      "ZClip ${1|True,False|}"
+    ],
+    "description": "Controls GPU near/far depth clipping"
+  },
+  "Cull": {
+    "prefix": "cull",
+    "body": [
+      "Cull ${1|Back,Front,Off|}"
+    ],
+    "description": "Polygon face culling mode"
+  },
+  "Blend": {
+    "prefix": "blend",
+    "body": [
+      "Blend ${1|Off,SrcAlpha OneMinusSrcAlpha,One One,One OneMinusSrcAlpha,OneMinusDstColor One,DstColor Zero|}"
+    ],
+    "description": "Alpha blending mode"
+  },
+  "BlendOp": {
+    "prefix": "blendop",
+    "body": [
+      "BlendOp ${1|Add,Sub,RevSub,Min,Max|}"
+    ],
+    "description": "Blend operation"
+  },
+  "Tags": {
+    "prefix": "tags",
+    "body": [
+      "Tags { \"${1:RenderType}\" = \"${2:Opaque}\" \"${3:RenderPipeline}\" = \"${4:UniversalPipeline}\" }"
+    ],
+    "description": "ShaderLab SubShader/Pass tags"
   }
 }

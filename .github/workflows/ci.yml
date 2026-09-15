@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  check-extension:
+    name: Check Zed WASM Extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+          components: clippy
+
+      - name: Cargo Check WASM
+        run: cargo check --target wasm32-wasip1
+
+      - name: Clippy WASM
+        run: cargo clippy --target wasm32-wasip1 -- -D warnings
+
+  test-validator:
+    name: Test hlsl_validator (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Check, Clippy and Test hlsl_validator
+        working-directory: hlsl_validator
+        run: |
+          cargo check
+          cargo clippy -- -D warnings
+          cargo test
