@@ -1,0 +1,20 @@
+[package]
+name = "zed-hlsl-shaderlab"
+version = "0.1.0"
+edition = "2024"
+authors = ["Semih Ozdemir <semihozdmirr@gmail.com>"]
+description = "Zed HLSL & ShaderLab Extended: High-performance HLSL and Unity ShaderLab Language Server powered by Microsoft DXC"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7.0"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,0 +1,71 @@
+{
+  "Vertex Shader": {
+    "prefix": "vert",
+    "body": [
+      "Varyings vert(Attributes input)",
+      "{",
+      "\tVaryings output = (Varyings)0;",
+      "\toutput.positionCS = TransformObjectToHClip(input.positionOS.xyz);",
+      "\t$0",
+      "\treturn output;",
+      "}"
+    ],
+    "description": "Standard HLSL / Unity URP Vertex Shader function"
+  },
+  "Fragment Shader": {
+    "prefix": "frag",
+    "body": [
+      "float4 frag(Varyings input) : SV_Target",
+      "{",
+      "\t$0",
+      "\treturn float4(1.0, 1.0, 1.0, 1.0);",
+      "}"
+    ],
+    "description": "Standard HLSL / Unity Pixel Shader function"
+  },
+  "Struct Attributes": {
+    "prefix": "struct-attr",
+    "body": [
+      "struct Attributes",
+      "{",
+      "\tfloat3 positionOS   : POSITION;",
+      "\tfloat3 normalOS     : NORMAL;",
+      "\tfloat2 uv           : TEXCOORD0;",
+      "\t$0",
+      "};"
+    ],
+    "description": "Vertex input attributes struct"
+  },
+  "Struct Varyings": {
+    "prefix": "struct-vary",
+    "body": [
+      "struct Varyings",
+      "{",
+      "\tfloat4 positionCS   : SV_Position;",
+      "\tfloat2 uv           : TEXCOORD0;",
+      "\t$0",
+      "};"
+    ],
+    "description": "Vertex to fragment interpolators struct"
+  },
+  "Constant Buffer": {
+    "prefix": "cbuffer",
+    "body": [
+      "cbuffer ${1:UnityPerMaterial} : register(b${2:0})",
+      "{",
+      "\tfloat4 ${3:_BaseColor};",
+      "\t$0",
+      "};"
+    ],
+    "description": "Constant buffer (cbuffer) declaration"
+  },
+  "Texture and Sampler": {
+    "prefix": "texture2d",
+    "body": [
+      "Texture2D ${1:_MainTex};",
+      "SamplerState sampler_${1:_MainTex};",
+      "$0"
+    ],
+    "description": "Texture2D and paired SamplerState definition"
+  }
+}

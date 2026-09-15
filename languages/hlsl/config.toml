@@ -1,0 +1,14 @@
+name = "HLSL"
+grammar = "hlsl"
+path_suffixes = [
+    "hlsl", "hlsli", "fx",
+    "usf", "ush"
+]
+line_comments = ["// "]
+block_comment = { start = "/* ", prefix = "* ", end = "*/", tab_size = 1 }
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]
+language_servers = ["hlsl_validator"]

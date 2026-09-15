@@ -1,0 +1,13 @@
+name = "ShaderLab"
+grammar = "hlsl"
+path_suffixes = [
+    "shader", "cginc"
+]
+line_comments = ["// "]
+block_comment = { start = "/* ", prefix = "* ", end = "*/", tab_size = 1 }
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]
+language_servers = ["hlsl_validator"]

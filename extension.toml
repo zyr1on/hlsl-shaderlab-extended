@@ -1,0 +1,16 @@
+id = "hlsl-shaderlab-extended"
+name = "HLSL & ShaderLab Extended"
+description = "High-performance HLSL and Unity ShaderLab LSP for Zed: syntax diagnostics via Microsoft DXC, smart autocomplete, signature help, hover docs, and goto definition."
+version = "0.1.0"
+schema_version = 1
+authors = ["Semih Ozdemir <semihozdmirr@gmail.com>"]
+
+languages = ["languages/hlsl", "languages/shaderlab"]
+
+[language_servers.hlsl_validator]
+name = "HLSL Validator LSP"
+language = "HLSL"
+
+[grammars.hlsl]
+repository = "https://github.com/tree-sitter-grammars/tree-sitter-hlsl"
+commit = "bab9111922d53d43668fabb61869bec51bbcb915"
