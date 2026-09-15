@@ -845,45 +845,88 @@ fn handle_completion(
     }
 
     let mut items = Vec::new();
+    let mut seen_labels: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // 1. User-defined symbols and included files
     let (user_funcs, user_vars) = signature::resolve_includes_and_scan_symbols(uri, doc, doc_cache);
+
+    // 0. Parameters & Local Variables of Enclosing Function (Priority: HIGHEST!)
+    if let Some(f) = signature::find_enclosing_function(&user_funcs, line_idx) {
+        for (idx, p) in f.parsed_params.iter().enumerate() {
+            if seen_labels.insert(p.name.clone()) {
+                items.push(json!({
+                    "label": p.name,
+                    "kind": 6,
+                    "detail": format!("{} {} (parameter)", p.param_type, p.name),
+                    "documentation": format!("Parameter of function `{}`", f.name),
+                    "insertText": p.name,
+                    "sortText": format!("00_{:02}_{}", idx, p.name),
+                }));
+            }
+        }
+
+        for (idx, lv) in f.local_vars.iter().filter(|v| v.line <= line_idx).enumerate() {
+            if seen_labels.insert(lv.name.clone()) {
+                items.push(json!({
+                    "label": lv.name,
+                    "kind": 6,
+                    "detail": format!("{} {} (local)", lv.var_type, lv.name),
+                    "documentation": format!("Local variable declared in `{}` at line {}", f.name, lv.line + 1),
+                    "insertText": lv.name,
+                    "sortText": format!("01_{:02}_{}", idx, lv.name),
+                }));
+            }
+        }
+    }
+
+    // 1. User-defined global variables & cbuffer members
     for (idx, v) in user_vars.iter().enumerate() {
-        items.push(json!({
-            "label": v.name,
-            "kind": 6,
-            "detail": format!("{} {}", v.var_type, v.name),
-            "documentation": v.doc.as_deref().unwrap_or("User variable"),
-            "insertText": v.name,
-            "sortText": format!("10_{:03}_{}", idx, v.name),
-        }));
+        if seen_labels.insert(v.name.clone()) {
+            let detail = if v.qualifier.is_empty() {
+                format!("{} {}", v.var_type, v.name)
+            } else {
+                format!("{} {} ({})", v.var_type, v.name, v.qualifier)
+            };
+            items.push(json!({
+                "label": v.name,
+                "kind": 6,
+                "detail": detail,
+                "documentation": v.doc.as_deref().unwrap_or("Global variable"),
+                "insertText": v.name,
+                "sortText": format!("10_{:03}_{}", idx, v.name),
+            }));
+        }
     }
 
+    // 2. User-defined functions
     for (idx, f) in user_funcs.iter().enumerate() {
-        items.push(json!({
-            "label": f.name,
-            "kind": 3,
-            "detail": f.label,
-            "documentation": f.doc.as_deref().unwrap_or("User function"),
-            "insertText": format!("{}($1)", f.name),
-            "insertTextFormat": 2,
-            "sortText": format!("15_{:03}_{}", idx, f.name),
-        }));
+        if seen_labels.insert(f.name.clone()) {
+            items.push(json!({
+                "label": f.name,
+                "kind": 3,
+                "detail": f.label,
+                "documentation": f.doc.as_deref().unwrap_or("User function"),
+                "insertText": format!("{}($1)", f.name),
+                "insertTextFormat": 2,
+                "sortText": format!("15_{:03}_{}", idx, f.name),
+            }));
+        }
     }
 
-    // 2. User structs
+    // 3. User structs (Types!)
     let structs = signature::scan_struct_definitions(doc);
     for (idx, s) in structs.iter().enumerate() {
-        items.push(json!({
-            "label": s.name,
-            "kind": 7,
-            "detail": format!("struct {}", s.name),
-            "insertText": s.name,
-            "sortText": format!("20_{:02}_{}", idx, s.name),
-        }));
+        if seen_labels.insert(s.name.clone()) {
+            items.push(json!({
+                "label": s.name,
+                "kind": 7,
+                "detail": format!("struct {}", s.name),
+                "insertText": s.name,
+                "sortText": format!("20_{:02}_{}", idx, s.name),
+            }));
+        }
     }
 
-    // 3. Engine-filtered Built-in Functions
+    // 4. Engine-filtered Built-in Functions
     for (idx, func) in docs::BUILTIN_FUNCTIONS.iter().enumerate() {
         let is_unity = func.description.contains("Unity");
         let is_unreal = func.description.contains("Unreal");
@@ -898,33 +941,37 @@ fn handle_completion(
             continue;
         }
 
-        let primary_overload = func.overloads.first().map(|o| o.label).unwrap_or(func.name);
-        items.push(json!({
-            "label": func.name,
-            "kind": 3,
-            "detail": primary_overload,
-            "documentation": {
-                "kind": "markdown",
-                "value": func.description
-            },
-            "insertText": format!("{}($1)", func.name),
-            "insertTextFormat": 2,
-            "sortText": format!("30_{:03}_{}", idx, func.name),
-        }));
+        if seen_labels.insert(func.name.to_string()) {
+            let primary_overload = func.overloads.first().map(|o| o.label).unwrap_or(func.name);
+            items.push(json!({
+                "label": func.name,
+                "kind": 3,
+                "detail": primary_overload,
+                "documentation": {
+                    "kind": "markdown",
+                    "value": func.description
+                },
+                "insertText": format!("{}($1)", func.name),
+                "insertTextFormat": 2,
+                "sortText": format!("30_{:03}_{}", idx, func.name),
+            }));
+        }
     }
 
-    // 4. Built-in Types
+    // 5. Built-in Types
     for (idx, t) in docs::BUILTIN_TYPES.iter().enumerate() {
-        items.push(json!({
-            "label": *t,
-            "kind": 7,
-            "detail": "HLSL Type",
-            "insertText": *t,
-            "sortText": format!("35_{:03}_{}", idx, t),
-        }));
+        if seen_labels.insert((*t).to_string()) {
+            items.push(json!({
+                "label": *t,
+                "kind": 7,
+                "detail": "HLSL Type",
+                "insertText": *t,
+                "sortText": format!("35_{:03}_{}", idx, t),
+            }));
+        }
     }
 
-    // 5. Built-in Keywords (HLSL only, exclude ShaderLab keywords)
+    // 6. Built-in Keywords (HLSL only, exclude ShaderLab keywords)
     let hlsl_keywords = [
         "struct", "cbuffer", "tbuffer", "register", "static", "const", "inline",
         "return", "if", "else", "for", "while", "do", "switch", "case", "default",
@@ -932,15 +979,17 @@ fn handle_completion(
         "in", "out", "inout", "packoffset",
     ];
     for (idx, kw) in hlsl_keywords.iter().enumerate() {
-        items.push(json!({
-            "label": *kw,
-            "kind": 14,
-            "insertText": *kw,
-            "sortText": format!("40_{:03}_{}", idx, kw),
-        }));
+        if seen_labels.insert((*kw).to_string()) {
+            items.push(json!({
+                "label": *kw,
+                "kind": 14,
+                "insertText": *kw,
+                "sortText": format!("40_{:03}_{}", idx, kw),
+            }));
+        }
     }
 
-    // 6. Snippets
+    // 7. Snippets
     let snippets = [
         ("vert", "Vertex Shader function", "Varyings vert(Attributes input)\n{\n    Varyings output = (Varyings)0;\n    output.positionCS = TransformObjectToHClip(input.positionOS.xyz);\n    $0\n    return output;\n}"),
         ("frag", "Fragment/Pixel Shader function", "float4 frag(Varyings input) : SV_Target\n{\n    $0\n    return float4(1.0, 1.0, 1.0, 1.0);\n}"),
@@ -1310,9 +1359,115 @@ float4 MyVertShader(Attributes input) : SV_Position {
         assert_eq!(funcs.len(), 1);
         assert_eq!(funcs[0].name, "MyVertShader");
         assert_eq!(funcs[0].parameters.len(), 1);
+        assert_eq!(funcs[0].parsed_params.len(), 1);
+        assert_eq!(funcs[0].parsed_params[0].name, "input");
+        assert_eq!(funcs[0].parsed_params[0].param_type, "Attributes");
 
-        let vars = signature::scan_user_variables(code, None, None);
-        assert!(vars.iter().any(|v| v.name == "Attributes" && v.var_type == "struct"));
+        let structs = signature::scan_struct_definitions(code);
+        assert!(structs.iter().any(|s| s.name == "Attributes" && s.fields.len() == 2));
+    }
+
+    #[test]
+    fn test_function_parameter_completion_and_deduplication() {
+        let code = r#"
+struct VSInput {
+    float3 position : POSITION;
+    float4 color : COLOR;
+};
+
+struct VSOutput {
+    float4 position : SV_Position;
+    float4 color : COLOR;
+};
+
+VSOutput VSMain(VSInput input)
+{
+    VSOutput output;
+
+    output.position = float4(inpu, 1.0);
+    output.color = input.color;
+
+    return output;
+}
+"#;
+        let mut cache = HashMap::new();
+        cache.insert("file:///test.hlsl".to_string(), code.to_string());
+        // Cursor at line 17: "output.position = float4(inpu, 1.0);" right after 'inpu'
+        let req = json!({
+            "params": {
+                "textDocument": { "uri": "file:///test.hlsl" },
+                "position": { "line": 17, "character": 33 }
+            }
+        });
+        let result = handle_completion(&req, &cache);
+        let arr = result.as_array().expect("Result should be array");
+
+        // 1. Parameter "input" MUST be present with top priority!
+        let input_item = arr.iter().find(|i| i["label"] == "input");
+        assert!(input_item.is_some(), "Function parameter 'input' MUST be in completions!");
+        let input_obj = input_item.unwrap();
+        assert_eq!(input_obj["kind"], 6);
+        assert!(input_obj["sortText"].as_str().unwrap().starts_with("00_"));
+
+        // 2. Local variable "output" MUST be present!
+        let output_item = arr.iter().find(|i| i["label"] == "output");
+        assert!(output_item.is_some(), "Local variable 'output' MUST be in completions!");
+        assert_eq!(output_item.unwrap()["kind"], 6);
+        assert!(output_item.unwrap()["sortText"].as_str().unwrap().starts_with("01_"));
+
+        // 3. "VSInput" MUST NOT be duplicated!
+        let vsinput_count = arr.iter().filter(|i| i["label"] == "VSInput").count();
+        assert_eq!(vsinput_count, 1, "VSInput should appear exactly once, got {}", vsinput_count);
+    }
+
+    #[test]
+    fn test_parameter_hover_and_definition() {
+        let code = r#"
+VSOutput VSMain(VSInput input)
+{
+    VSOutput output;
+    output.color = input.color;
+    return output;
+}
+"#;
+        let mut cache = HashMap::new();
+        cache.insert("file:///test.hlsl".to_string(), code.to_string());
+
+        // Test Hover on "input" (line 4: "    output.color = input.color;")
+        let hover_val = signature::get_hover_info("file:///test.hlsl", code, 4, 20, &cache);
+        assert!(!hover_val.is_null(), "Hover on parameter 'input' should return markdown!");
+        let hover_md = hover_val["contents"]["value"].as_str().unwrap();
+        assert!(hover_md.contains("VSInput input"), "Hover should show 'VSInput input'");
+        assert!(hover_md.contains("parameter of `VSMain`"), "Hover should mention 'parameter of VSMain'");
+
+        // Test Go to Definition on "input"
+        let def_req = json!({
+            "params": {
+                "textDocument": { "uri": "file:///test.hlsl" },
+                "position": { "line": 4, "character": 20 }
+            }
+        });
+        let def_val = signature::handle_definition(&def_req, &cache);
+        assert!(!def_val.is_null(), "Go to definition on 'input' should not be null!");
+        assert_eq!(def_val["range"]["start"]["line"], 1, "Parameter 'input' is declared on line 1");
+
+        // Test Hover on "output" (line 4: "    output.color = input.color;")
+        let hover_out = signature::get_hover_info("file:///test.hlsl", code, 4, 6, &cache);
+        assert!(!hover_out.is_null(), "Hover on local 'output' should return markdown!");
+        let hover_out_md = hover_out["contents"]["value"].as_str().unwrap();
+        assert!(hover_out_md.contains("VSOutput output"), "Hover should show 'VSOutput output'");
+        assert!(hover_out_md.contains("local variable in `VSMain`"), "Hover should mention local variable");
+
+        // Test Go to Definition on "output"
+        let def_out_req = json!({
+            "params": {
+                "textDocument": { "uri": "file:///test.hlsl" },
+                "position": { "line": 4, "character": 6 }
+            }
+        });
+        let def_out_val = signature::handle_definition(&def_out_req, &cache);
+        assert!(!def_out_val.is_null(), "Go to definition on 'output' should not be null!");
+        assert_eq!(def_out_val["range"]["start"]["line"], 3, "Local 'output' is declared on line 3");
     }
 
     #[test]
