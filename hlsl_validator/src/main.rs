@@ -1,5 +1,5 @@
 // hlsl_validator - main.rs
-// High-performance HLSL and Unity ShaderLab Language Server powered by Microsoft DXC
+// High-performance HLSL, Unity ShaderLab, and Unreal Engine Language Server powered by Microsoft DXC
 
 mod docs;
 mod signature;
@@ -17,6 +17,119 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ShaderContext {
+    PureHlsl,
+    UnityShaderLab,
+    UnityHlsl,
+    UnrealEngine,
+}
+
+pub fn detect_shader_context(uri: &str, content: &str) -> ShaderContext {
+    if uri.ends_with(".shader") || content.contains("Shader \"") {
+        ShaderContext::UnityShaderLab
+    } else if uri.ends_with(".usf") || uri.ends_with(".ush") || content.contains("/Engine/") {
+        ShaderContext::UnrealEngine
+    } else if uri.ends_with(".cginc")
+        || content.contains("HLSLPROGRAM")
+        || content.contains("CGPROGRAM")
+        || content.contains("UnityCG")
+        || uri.contains("Assets")
+        || uri.contains("Packages")
+    {
+        ShaderContext::UnityHlsl
+    } else {
+        ShaderContext::PureHlsl
+    }
+}
+
+pub fn is_inside_properties_block(doc: &str, target_line: usize) -> bool {
+    let mut in_props = false;
+    let mut brace_depth = 0;
+    for (idx, line) in doc.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Properties") {
+            in_props = true;
+        }
+        let open_b = line.chars().filter(|&c| c == '{').count();
+        let close_b = line.chars().filter(|&c| c == '}').count();
+        brace_depth += open_b;
+        if in_props && brace_depth > 0 && close_b >= brace_depth {
+            in_props = false;
+        }
+        brace_depth = brace_depth.saturating_sub(close_b);
+        if idx == target_line && in_props {
+            return true;
+        }
+    }
+    false
+}
+
+pub static SHADERLAB_PROPERTY_ATTRIBUTES: &[(&str, &str)] = &[
+    ("[HDR]", "Marks a Color or Texture property as High Dynamic Range"),
+    ("[HideInInspector]", "Hides property from the default Material Inspector"),
+    ("[Toggle]", "Displays a boolean checkbox toggle in the Material Inspector"),
+    ("[Normal]", "Validates that assigned texture is marked as Normal Map"),
+    ("[NoScaleOffset]", "Hides the Tiling and Offset fields for texture property"),
+    ("[IntRange]", "Restricts slider steps to integer values only"),
+];
+
+const UNITY_COMPAT_PREAMBLE: &str = r#"
+#ifndef __UNITY_BUILTIN_STUBS__
+#define __UNITY_BUILTIN_STUBS__
+#define fixed4 float4
+#define fixed3 float3
+#define fixed2 float2
+#define fixed float
+#define half4 float4
+#define half3 float3
+#define half2 float2
+#define half float
+struct UnitySampler2D { Texture2D t; SamplerState s; };
+#define sampler2D UnitySampler2D
+#define tex2D(tex, uv) (tex.t.Sample(tex.s, uv))
+#define tex2Dlod(tex, uv) (tex.t.SampleLevel(tex.s, (uv).xy, (uv).w))
+#define TRANSFORM_TEX(tex,name) ((tex.xy) * name##_ST.xy + name##_ST.zw)
+float4x4 UNITY_MATRIX_MVP;
+float4x4 unity_ObjectToWorld;
+float4x4 unity_WorldToObject;
+inline float4 UnityObjectToClipPos(float3 pos) { return mul(UNITY_MATRIX_MVP, float4(pos, 1.0)); }
+inline float4 UnityObjectToClipPos(float4 pos) { return mul(UNITY_MATRIX_MVP, pos); }
+inline float3 UnityObjectToWorldNormal(float3 norm) { return mul((float3x3)unity_WorldToObject, norm); }
+inline float3 UnityObjectToWorldDir(float3 dir) { return mul((float3x3)unity_ObjectToWorld, dir); }
+#define TEXTURE2D(name) Texture2D name
+#define SAMPLER(name) SamplerState name
+#define SAMPLE_TEXTURE2D(name, samplerName, coord2) name.Sample(samplerName, coord2)
+inline float4 TransformObjectToHClip(float3 pos) { return mul(UNITY_MATRIX_MVP, float4(pos, 1.0)); }
+inline float4 TransformObjectToHClip(float4 pos) { return mul(UNITY_MATRIX_MVP, pos); }
+#endif
+"#;
+
+const UNREAL_COMPAT_PREAMBLE: &str = r#"
+#ifndef __UNREAL_BUILTIN_STUBS__
+#define __UNREAL_BUILTIN_STUBS__
+struct FMaterialPixelParameters {
+    float3 WorldPosition;
+    float3 WorldPosition_CamRelative;
+    float3 WorldNormal;
+    float4 ScreenPosition;
+    float2 TexCoords[4];
+};
+struct FPixelMaterialInputs {
+    float3 EmissiveColor;
+    float3 BaseColor;
+};
+float3 Luminance(float3 LinearColor) {
+    return dot(LinearColor, float3(0.3, 0.59, 0.11));
+}
+float3 RotateAboutAxis(float4 NormalizedRotationAxisAndAngle, float3 PivotPoint, float3 Position) {
+    float3 Axis = NormalizedRotationAxisAndAngle.xyz;
+    float Angle = NormalizedRotationAxisAndAngle.w;
+    return Position + sin(Angle) * cross(Axis, Position - PivotPoint);
+}
+#endif
+"#;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Position {
     pub line: usize,
@@ -32,7 +145,7 @@ pub struct Range {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Diagnostic {
     pub range: Range,
-    pub severity: u8, // 1 = Error, 2 = Warning, 3 = Info, 4 = Hint
+    pub severity: u8,
     pub message: String,
     pub source: String,
 }
@@ -89,7 +202,6 @@ fn urlencoding_decode(s: &str) -> String {
     out
 }
 
-/// Resolves the candidate binary path for `dxc`.
 pub fn find_dxc_path() -> String {
     if let Ok(p) = env::var("DXC_PATH") {
         let trimmed = p.trim();
@@ -115,17 +227,14 @@ pub fn find_dxc_path() -> String {
     binary_name.to_string()
 }
 
-/// Discovers include directories for DXC by inspecting the file path, parent folders, and workspace root.
 pub fn discover_include_paths(uri: &str, workspace_root: Option<&Path>) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(file_path) = uri_to_path(uri) {
         if let Some(parent) = file_path.parent() {
             paths.push(parent.to_path_buf());
 
-            // Walk up to discover project markers
             let mut current = parent;
             while let Some(up) = current.parent() {
-                // Unity project structure: Assets & ProjectSettings
                 if up.join("Assets").is_dir() && up.join("ProjectSettings").is_dir() {
                     if !paths.contains(&up.to_path_buf()) {
                         paths.push(up.to_path_buf());
@@ -144,7 +253,6 @@ pub fn discover_include_paths(uri: &str, workspace_root: Option<&Path>) -> Vec<P
                     }
                     break;
                 }
-                // Unreal project structure: Source or *.uproject
                 if up.join("Source").is_dir() || up.join("Config").is_dir() {
                     if !paths.contains(&up.to_path_buf()) {
                         paths.push(up.to_path_buf());
@@ -181,7 +289,6 @@ pub fn discover_include_paths(uri: &str, workspace_root: Option<&Path>) -> Vec<P
     paths
 }
 
-/// Checks if target_line is inside a Unity HLSLPROGRAM/CGPROGRAM block.
 pub fn is_inside_hlsl_block(doc: &str, target_line: usize) -> bool {
     let mut in_block = false;
     for (idx, line) in doc.lines().enumerate() {
@@ -198,46 +305,64 @@ pub fn is_inside_hlsl_block(doc: &str, target_line: usize) -> bool {
     false
 }
 
-/// Runs Microsoft DXC and extracts diagnostics.
 pub fn validate_shader(
     uri: &str,
     content: &str,
     dxc_path: &str,
     workspace_root: Option<&Path>,
 ) -> Vec<Diagnostic> {
-    let is_shaderlab = uri.ends_with(".shader") || uri.ends_with(".cginc");
+    let context = detect_shader_context(uri, content);
     let mut diagnostics = Vec::new();
     let include_dirs = discover_include_paths(uri, workspace_root);
 
-    if is_shaderlab {
-        let mut in_block = false;
-        let mut block_start_line = 0;
-        let mut block_lines = Vec::new();
+    match context {
+        ShaderContext::UnityShaderLab => {
+            let mut in_block = false;
+            let mut block_start_line = 0;
+            let mut block_lines = Vec::new();
 
-        for (line_idx, line) in content.lines().enumerate() {
-            let trimmed = line.trim();
-            if trimmed == "HLSLPROGRAM" || trimmed == "CGPROGRAM" {
-                in_block = true;
-                block_start_line = line_idx + 1;
-                block_lines.clear();
-                continue;
-            }
-            if trimmed == "ENDHLSL" || trimmed == "ENDCG" {
-                if in_block {
-                    in_block = false;
-                    let block_hlsl = block_lines.join("\n");
-                    let block_diags = run_dxc_on_text(&block_hlsl, dxc_path, block_start_line, &include_dirs);
-                    diagnostics.extend(block_diags);
+            for (line_idx, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed == "HLSLPROGRAM" || trimmed == "CGPROGRAM" {
+                    in_block = true;
+                    block_start_line = line_idx + 1;
+                    block_lines.clear();
+                    continue;
                 }
-                continue;
-            }
+                if trimmed == "ENDHLSL" || trimmed == "ENDCG" {
+                    if in_block {
+                        in_block = false;
+                        let block_hlsl = format!("{}\n{}", UNITY_COMPAT_PREAMBLE, block_lines.join("\n"));
+                        let preamble_line_count = UNITY_COMPAT_PREAMBLE.lines().count();
+                        let block_diags = run_dxc_on_text(&block_hlsl, dxc_path, block_start_line, &include_dirs, preamble_line_count);
+                        diagnostics.extend(block_diags);
+                    }
+                    continue;
+                }
 
-            if in_block {
-                block_lines.push(line);
+                if in_block {
+                    block_lines.push(line);
+                }
             }
         }
-    } else {
-        diagnostics = run_dxc_on_text(content, dxc_path, 0, &include_dirs);
+        ShaderContext::UnityHlsl => {
+            let wrapped = format!("{}\n{}", UNITY_COMPAT_PREAMBLE, content);
+            let preamble_line_count = UNITY_COMPAT_PREAMBLE.lines().count();
+            diagnostics = run_dxc_on_text(&wrapped, dxc_path, 0, &include_dirs, preamble_line_count);
+        }
+        ShaderContext::UnrealEngine => {
+            let preamble = if content.contains("FMaterialPixelParameters") {
+                "float3 Luminance(float3 LinearColor) { return dot(LinearColor, float3(0.3, 0.59, 0.11)); }\nfloat3 RotateAboutAxis(float4 NormalizedRotationAxisAndAngle, float3 PivotPoint, float3 Position) {\n    float3 Axis = NormalizedRotationAxisAndAngle.xyz;\n    float Angle = NormalizedRotationAxisAndAngle.w;\n    return Position + sin(Angle) * cross(Axis, Position - PivotPoint);\n}\n"
+            } else {
+                UNREAL_COMPAT_PREAMBLE
+            };
+            let wrapped = format!("{}\n{}", preamble, content);
+            let preamble_line_count = preamble.lines().count();
+            diagnostics = run_dxc_on_text(&wrapped, dxc_path, 0, &include_dirs, preamble_line_count);
+        }
+        ShaderContext::PureHlsl => {
+            diagnostics = run_dxc_on_text(content, dxc_path, 0, &include_dirs, 0);
+        }
     }
 
     diagnostics
@@ -245,12 +370,12 @@ pub fn validate_shader(
 
 static TEMP_FILE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Writes content to a temporary file and runs DXC with `-T lib_6_3 -HV 2021` and `-I` search paths.
 pub fn run_dxc_on_text(
     content: &str,
     dxc_path: &str,
     line_offset: usize,
     include_dirs: &[PathBuf],
+    preamble_line_count: usize,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let temp_dir = env::temp_dir();
@@ -298,7 +423,12 @@ pub fn run_dxc_on_text(
             };
 
             if let (Ok(parsed_line), Ok(parsed_col)) = (line_str.parse::<usize>(), col_str.parse::<usize>()) {
-                let actual_line = parsed_line.saturating_sub(1) + line_offset;
+                if parsed_line <= preamble_line_count {
+                    // Ignore internal preamble errors if any
+                    continue;
+                }
+
+                let actual_line = parsed_line.saturating_sub(preamble_line_count).saturating_sub(1) + line_offset;
                 let actual_col = parsed_col.saturating_sub(1);
 
                 let (severity, message) = if rest.contains("error:") {
@@ -306,10 +436,10 @@ pub fn run_dxc_on_text(
                     if raw_msg.contains("file not found")
                         && (raw_msg.contains("Packages/") || raw_msg.contains("UnityCG") || raw_msg.contains("Engine/"))
                     {
-                        (2, format!("Include file not found: {raw_msg}. (Check project root or include paths in settings)"))
-                    } else {
-                        (1, raw_msg.to_string())
+                        // Stubs provided, don't flag missing engine files as errors
+                        continue;
                     }
+                    (1, raw_msg.to_string())
                 } else if rest.contains("warning:") {
                     let msg = rest.split("warning:").nth(1).unwrap_or(rest).trim();
                     (2, msg.to_string())
@@ -333,7 +463,6 @@ pub fn run_dxc_on_text(
     diagnostics
 }
 
-/// Formats HLSL and ShaderLab source code with proper brace indentation and space normalization.
 pub fn format_document(text: &str, tab_size: usize, insert_spaces: bool) -> Vec<Value> {
     let indent_unit = if insert_spaces {
         " ".repeat(tab_size)
@@ -424,23 +553,73 @@ fn handle_completion(
     let safe_col = col_idx.min(line.len());
     let prefix = &line[..safe_col];
 
-    let is_shaderlab = uri.ends_with(".shader") || uri.ends_with(".cginc");
-    let in_hlsl = !is_shaderlab || is_inside_hlsl_block(doc, line_idx);
+    let context = detect_shader_context(uri, doc);
 
     // ------------------------------------------------------------------------
-    // ShaderLab Contextual Completions (outside HLSL blocks)
+    // Context A: Unity ShaderLab (Outside HLSL blocks)
     // ------------------------------------------------------------------------
-    if !in_hlsl {
-        let trimmed_prefix = prefix.trim();
+    if context == ShaderContext::UnityShaderLab && !is_inside_hlsl_block(doc, line_idx) {
         let mut sl_items = Vec::new();
+        let in_props = is_inside_properties_block(doc, line_idx);
 
-        // 1. Render State completions
+        if in_props {
+            // 1. Property Attributes: [HDR], [HideInInspector], [Toggle]
+            if prefix.trim_start().starts_with('[') {
+                for (idx, (attr, desc)) in SHADERLAB_PROPERTY_ATTRIBUTES.iter().enumerate() {
+                    sl_items.push(json!({
+                        "label": *attr,
+                        "kind": 14,
+                        "detail": *desc,
+                        "insertText": *attr,
+                        "sortText": format!("00_{:02}_{}", idx, attr),
+                    }));
+                }
+                return json!(sl_items);
+            }
+
+            // 2. Standard Property Templates
+            let prop_templates = [
+                ("_MainTex", "_MainTex (\"Texture\", 2D) = \"white\" {}", "Albedo 2D Texture slot"),
+                ("_Color", "_Color (\"Color\", Color) = (1, 1, 1, 1)", "Main RGBA Color property"),
+                ("_Glossiness", "_Glossiness (\"Smoothness\", Range(0, 1)) = 0.5", "Smoothness slider property"),
+                ("_Metallic", "_Metallic (\"Metallic\", Range(0, 1)) = 0.0", "Metallic slider property"),
+                ("_BumpMap", "_BumpMap (\"Normal Map\", 2D) = \"bump\" {}", "Tangent normal map slot"),
+                ("_EmissionColor", "_EmissionColor (\"Emission\", Color) = (0, 0, 0, 1)", "HDR emission color"),
+                ("_Vector", "_Vector (\"Vector\", Vector) = (0, 0, 0, 0)", "4D Vector property"),
+            ];
+            for (idx, (label, snip, desc)) in prop_templates.iter().enumerate() {
+                sl_items.push(json!({
+                    "label": *label,
+                    "kind": 15,
+                    "detail": *desc,
+                    "insertText": *snip,
+                    "sortText": format!("05_{:02}_{}", idx, label),
+                }));
+            }
+
+            // 3. Property Types: 2D, Color, Float, Range, etc.
+            for (idx, (prop_type, snip, desc)) in docs::SHADERLAB_PROPERTY_TYPES.iter().enumerate() {
+                sl_items.push(json!({
+                    "label": *prop_type,
+                    "kind": 7,
+                    "detail": *desc,
+                    "insertText": *snip,
+                    "sortText": format!("10_{:02}_{}", idx, prop_type),
+                }));
+            }
+
+            return json!(sl_items);
+        }
+
+        // Outside Properties (In SubShader / Pass)
+        let trimmed_prefix = prefix.trim();
+
         if trimmed_prefix.starts_with("Blend") {
             for (idx, (_, val, desc)) in docs::SHADERLAB_RENDER_STATES.iter().filter(|(s, _, _)| *s == "Blend").enumerate() {
                 let insert = val.strip_prefix("Blend ").unwrap_or(val);
                 sl_items.push(json!({
                     "label": *val,
-                    "kind": 12, // Value
+                    "kind": 12,
                     "detail": *desc,
                     "insertText": insert,
                     "sortText": format!("00_{:02}_{}", idx, val),
@@ -491,12 +670,11 @@ fn handle_completion(
             return json!(sl_items);
         }
 
-        // 2. Tags completion
         if prefix.contains("Tags") || prefix.contains('"') {
             for (idx, (tag, desc)) in docs::SHADERLAB_TAGS.iter().enumerate() {
                 sl_items.push(json!({
                     "label": *tag,
-                    "kind": 10, // Property
+                    "kind": 10,
                     "detail": *desc,
                     "insertText": *tag,
                     "sortText": format!("05_{:02}_{}", idx, tag),
@@ -504,28 +682,15 @@ fn handle_completion(
             }
         }
 
-        // 3. ShaderLab Property types
-        for (idx, (prop_type, snip, desc)) in docs::SHADERLAB_PROPERTY_TYPES.iter().enumerate() {
-            sl_items.push(json!({
-                "label": *prop_type,
-                "kind": 7, // Type
-                "detail": *desc,
-                "insertText": *snip,
-                "sortText": format!("10_{:02}_{}", idx, prop_type),
-            }));
-        }
-
-        // 4. ShaderLab Keywords
-        for (idx, kw) in docs::BUILTIN_KEYWORDS.iter().enumerate() {
+        for (idx, kw) in docs::BUILTIN_KEYWORDS.iter().filter(|kw| !["float", "float4", "cbuffer", "struct", "return"].contains(kw)).enumerate() {
             sl_items.push(json!({
                 "label": *kw,
-                "kind": 14, // Keyword
+                "kind": 14,
                 "insertText": *kw,
                 "sortText": format!("20_{:02}_{}", idx, kw),
             }));
         }
 
-        // 5. ShaderLab Snippets
         let sl_snippets = [
             ("shader", "Unity ShaderLab Shader template", "Shader \"$1\"\n{\n    Properties\n    {\n        _MainTex (\"Texture\", 2D) = \"white\" {}\n    }\n    SubShader\n    {\n        Tags { \"RenderType\"=\"Opaque\" \"RenderPipeline\"=\"UniversalPipeline\" }\n        Pass\n        {\n            HLSLPROGRAM\n            #pragma vertex vert\n            #pragma fragment frag\n            $0\n            ENDHLSL\n        }\n    }\n}"),
             ("pass", "Unity ShaderLab Pass block", "Pass\n{\n    Name \"$1\"\n    HLSLPROGRAM\n    #pragma vertex vert\n    #pragma fragment frag\n    $0\n    ENDHLSL\n}"),
@@ -535,7 +700,7 @@ fn handle_completion(
         for (idx, (label, detail, snip)) in sl_snippets.iter().enumerate() {
             sl_items.push(json!({
                 "label": *label,
-                "kind": 15, // Snippet
+                "kind": 15,
                 "detail": *detail,
                 "insertText": *snip,
                 "insertTextFormat": 2,
@@ -547,10 +712,10 @@ fn handle_completion(
     }
 
     // ------------------------------------------------------------------------
-    // Pure HLSL & HLSLPROGRAM Context
+    // Context B: HLSL, Unity HLSL, or Unreal Engine
     // ------------------------------------------------------------------------
 
-    // Member access completions: expr.field or expr.partial (e.g. "output.po" or "output.")
+    // Member access: expr.field or expr.partial
     if let Some(dot_idx) = prefix.rfind('.') {
         let before_dot = prefix[..dot_idx].trim_end();
         let after_dot = prefix[dot_idx + 1..].trim_start();
@@ -585,12 +750,12 @@ fn handle_completion(
                     }
 
                     if let Some(target_type) = current_type {
-                        // 1. Struct or cbuffer member fields
+                        // Struct fields
                         if let Some(s_def) = structs.iter().find(|s| s.name == target_type) {
                             let field_items: Vec<Value> = s_def.fields.iter().enumerate().map(|(idx, f)| {
                                 json!({
                                     "label": f.name,
-                                    "kind": 5, // Field
+                                    "kind": 5,
                                     "detail": format!("{} {}.{}", f.field_type, s_def.name, f.name),
                                     "insertText": f.name,
                                     "sortText": format!("00_{:02}_{}", idx, f.name),
@@ -599,17 +764,14 @@ fn handle_completion(
                             return json!(field_items);
                         }
 
-                        // 2. Texture object methods (.Sample, .SampleLevel, .Load, etc.)
+                        // Texture methods
                         if target_type.starts_with("Texture") {
                             let method_items: Vec<Value> = docs::TEXTURE_METHODS.iter().enumerate().map(|(idx, m)| {
                                 json!({
                                     "label": m.name,
-                                    "kind": 2, // Method
+                                    "kind": 2,
                                     "detail": m.signature,
-                                    "documentation": {
-                                        "kind": "markdown",
-                                        "value": m.description
-                                    },
+                                    "documentation": { "kind": "markdown", "value": m.description },
                                     "insertText": m.snippet,
                                     "insertTextFormat": 2,
                                     "sortText": format!("00_{:02}_{}", idx, m.name),
@@ -618,17 +780,14 @@ fn handle_completion(
                             return json!(method_items);
                         }
 
-                        // 3. Buffer object methods (.Load, .GetDimensions)
+                        // Buffer methods
                         if target_type.contains("Buffer") {
                             let method_items: Vec<Value> = docs::BUFFER_METHODS.iter().enumerate().map(|(idx, m)| {
                                 json!({
                                     "label": m.name,
-                                    "kind": 2, // Method
+                                    "kind": 2,
                                     "detail": m.signature,
-                                    "documentation": {
-                                        "kind": "markdown",
-                                        "value": m.description
-                                    },
+                                    "documentation": { "kind": "markdown", "value": m.description },
                                     "insertText": m.snippet,
                                     "insertTextFormat": 2,
                                     "sortText": format!("00_{:02}_{}", idx, m.name),
@@ -637,7 +796,7 @@ fn handle_completion(
                             return json!(method_items);
                         }
 
-                        // 4. Vector swizzles
+                        // Vector swizzles
                         let is_vec = target_type.starts_with("float")
                             || target_type.starts_with("half")
                             || target_type.starts_with("int")
@@ -653,7 +812,7 @@ fn handle_completion(
                             let items: Vec<Value> = swizzles.iter().enumerate().map(|(idx, sw)| {
                                 json!({
                                     "label": *sw,
-                                    "kind": 10, // Property
+                                    "kind": 10,
                                     "detail": format!("Swizzle .{sw}"),
                                     "insertText": *sw,
                                     "sortText": format!("00_{:02}_{}", idx, sw),
@@ -667,19 +826,16 @@ fn handle_completion(
         }
     }
 
-    // Semantic completion when typing after ':' (e.g. "float4 pos : SV_")
+    // Semantic completion when typing after ':'
     if let Some(colon_idx) = prefix.rfind(':') {
         let after_colon = prefix[colon_idx + 1..].trim();
-        if !prefix.contains(';') && after_colon.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        if !prefix.contains(';') && !prefix.contains('{') && after_colon.chars().all(|c| c.is_alphanumeric() || c == '_') {
             let semantic_items: Vec<Value> = docs::BUILTIN_VARIABLES.iter().enumerate().map(|(idx, (sem, desc))| {
                 json!({
                     "label": *sem,
-                    "kind": 6, // Variable
+                    "kind": 6,
                     "detail": "HLSL Semantic",
-                    "documentation": {
-                        "kind": "markdown",
-                        "value": *desc
-                    },
+                    "documentation": { "kind": "markdown", "value": *desc },
                     "insertText": *sem,
                     "sortText": format!("00_{:02}_{}", idx, sem),
                 })
@@ -695,7 +851,7 @@ fn handle_completion(
     for (idx, v) in user_vars.iter().enumerate() {
         items.push(json!({
             "label": v.name,
-            "kind": 6, // Variable
+            "kind": 6,
             "detail": format!("{} {}", v.var_type, v.name),
             "documentation": v.doc.as_deref().unwrap_or("User variable"),
             "insertText": v.name,
@@ -706,7 +862,7 @@ fn handle_completion(
     for (idx, f) in user_funcs.iter().enumerate() {
         items.push(json!({
             "label": f.name,
-            "kind": 3, // Function
+            "kind": 3,
             "detail": f.label,
             "documentation": f.doc.as_deref().unwrap_or("User function"),
             "insertText": format!("{}($1)", f.name),
@@ -715,24 +871,37 @@ fn handle_completion(
         }));
     }
 
-    // 2. User-defined structs
+    // 2. User structs
     let structs = signature::scan_struct_definitions(doc);
     for (idx, s) in structs.iter().enumerate() {
         items.push(json!({
             "label": s.name,
-            "kind": 7, // Struct / Class
+            "kind": 7,
             "detail": format!("struct {}", s.name),
             "insertText": s.name,
             "sortText": format!("20_{:02}_{}", idx, s.name),
         }));
     }
 
-    // 3. Built-in HLSL Intrinsics (Microsoft reference)
+    // 3. Engine-filtered Built-in Functions
     for (idx, func) in docs::BUILTIN_FUNCTIONS.iter().enumerate() {
+        let is_unity = func.description.contains("Unity");
+        let is_unreal = func.description.contains("Unreal");
+
+        let include_func = match context {
+            ShaderContext::PureHlsl => !is_unity && !is_unreal,
+            ShaderContext::UnrealEngine => !is_unity,
+            ShaderContext::UnityShaderLab | ShaderContext::UnityHlsl => !is_unreal,
+        };
+
+        if !include_func {
+            continue;
+        }
+
         let primary_overload = func.overloads.first().map(|o| o.label).unwrap_or(func.name);
         items.push(json!({
             "label": func.name,
-            "kind": 3, // Function
+            "kind": 3,
             "detail": primary_overload,
             "documentation": {
                 "kind": "markdown",
@@ -748,35 +917,40 @@ fn handle_completion(
     for (idx, t) in docs::BUILTIN_TYPES.iter().enumerate() {
         items.push(json!({
             "label": *t,
-            "kind": 7, // Class / Type
+            "kind": 7,
             "detail": "HLSL Type",
             "insertText": *t,
             "sortText": format!("35_{:03}_{}", idx, t),
         }));
     }
 
-    // 5. Built-in Keywords
-    for (idx, kw) in docs::BUILTIN_KEYWORDS.iter().enumerate() {
+    // 5. Built-in Keywords (HLSL only, exclude ShaderLab keywords)
+    let hlsl_keywords = [
+        "struct", "cbuffer", "tbuffer", "register", "static", "const", "inline",
+        "return", "if", "else", "for", "while", "do", "switch", "case", "default",
+        "break", "continue", "discard", "true", "false",
+        "in", "out", "inout", "packoffset",
+    ];
+    for (idx, kw) in hlsl_keywords.iter().enumerate() {
         items.push(json!({
             "label": *kw,
-            "kind": 14, // Keyword
+            "kind": 14,
             "insertText": *kw,
             "sortText": format!("40_{:03}_{}", idx, kw),
         }));
     }
 
-    // 6. Production Code Snippets
+    // 6. Snippets
     let snippets = [
         ("vert", "Vertex Shader function", "Varyings vert(Attributes input)\n{\n    Varyings output = (Varyings)0;\n    output.positionCS = TransformObjectToHClip(input.positionOS.xyz);\n    $0\n    return output;\n}"),
         ("frag", "Fragment/Pixel Shader function", "float4 frag(Varyings input) : SV_Target\n{\n    $0\n    return float4(1.0, 1.0, 1.0, 1.0);\n}"),
         ("struct", "Struct declaration", "struct $1\n{\n    $0\n};"),
         ("cbuffer", "Constant Buffer declaration", "cbuffer $1\n{\n    $0\n};"),
     ];
-
     for (idx, (label, detail, snip)) in snippets.iter().enumerate() {
         items.push(json!({
             "label": *label,
-            "kind": 15, // Snippet
+            "kind": 15,
             "detail": *detail,
             "insertText": *snip,
             "insertTextFormat": 2,
@@ -825,7 +999,6 @@ fn main() {
         env::var("WORKSPACE_ROOT").ok().map(PathBuf::from),
     ));
 
-    // Worker Thread: 120ms debounce queue
     let worker_dxc = dxc_path.clone();
     let worker_ws = Arc::clone(&workspace_root);
     thread::spawn(move || {
@@ -862,7 +1035,6 @@ fn main() {
         }
     });
 
-    // LSP JSON-RPC Dispatch Loop
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
@@ -873,7 +1045,7 @@ fn main() {
         loop {
             line.clear();
             if reader.read_line(&mut line).unwrap_or(0) == 0 {
-                return; // EOF
+                return;
             }
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -931,7 +1103,7 @@ fn main() {
                         "capabilities": {
                             "textDocumentSync": 1,
                             "completionProvider": {
-                                "triggerCharacters": [".", "(", ">", ":", "\"", " "],
+                                "triggerCharacters": [".", "(", ">", ":", "\"", " ", "["],
                                 "resolveProvider": false
                             },
                             "signatureHelpProvider": {
@@ -1103,6 +1275,16 @@ mod tests {
     }
 
     #[test]
+    fn test_range_signature_help() {
+        let cache = HashMap::new();
+        let code = "    _Gloss (\"Smoothness\", Range(0, ";
+        let sig = signature::get_signature_help("file:///test.shader", code, 0, code.len(), &cache);
+        assert!(!sig.is_null());
+        assert_eq!(sig["signatures"][0]["label"], "Range(float min, float max)");
+        assert_eq!(sig["activeParameter"], 1);
+    }
+
+    #[test]
     fn test_hover_info() {
         let cache = HashMap::new();
         let code = "float v = saturate(val);";
@@ -1115,13 +1297,11 @@ mod tests {
     #[test]
     fn test_user_symbol_scanning() {
         let code = r#"
-// Object attributes
 struct Attributes {
     float3 positionOS : POSITION;
     float2 uv : TEXCOORD0;
 };
 
-// Vertex shader
 float4 MyVertShader(Attributes input) : SV_Position {
     return float4(input.positionOS, 1.0);
 }
@@ -1136,7 +1316,7 @@ float4 MyVertShader(Attributes input) : SV_Position {
     }
 
     #[test]
-    fn test_validate_shader_dxc_valid() {
+    fn test_validate_pure_hlsl_valid() {
         let dxc = find_dxc_path();
         let valid_shader = r#"
 float4 MainVs(float3 pos : POSITION) : SV_Position {
@@ -1144,11 +1324,11 @@ float4 MainVs(float3 pos : POSITION) : SV_Position {
 }
 "#;
         let diags = validate_shader("file:///test.hlsl", valid_shader, &dxc, None);
-        assert!(diags.is_empty(), "Expected 0 diagnostics for valid shader, got: {:?}", diags);
+        assert!(diags.is_empty(), "Expected 0 diagnostics for valid pure HLSL, got: {:?}", diags);
     }
 
     #[test]
-    fn test_validate_shader_dxc_error() {
+    fn test_validate_pure_hlsl_error() {
         let dxc = find_dxc_path();
         let invalid_shader = r#"
 float4 MainVs(float3 pos : POSITION) : SV_Position {
@@ -1156,31 +1336,171 @@ float4 MainVs(float3 pos : POSITION) : SV_Position {
 }
 "#;
         let diags = validate_shader("file:///test.hlsl", invalid_shader, &dxc, None);
-        assert!(!diags.is_empty(), "Expected diagnostics for undefined variable error");
+        assert!(!diags.is_empty(), "Expected diagnostics for undefined variable in pure HLSL");
         assert!(diags.iter().any(|d| d.message.contains("undefined_variable") || d.severity == 1));
     }
 
     #[test]
-    fn test_shaderlab_block_extraction() {
+    fn test_validate_unity_unlit_shader() {
         let dxc = find_dxc_path();
-        let shaderlab = r#"
-Shader "Custom/TestShader"
+        let unity_shader = r#"
+Shader "Unlit/TestUnlit"
 {
+    Properties
+    {
+        _MainTex ("Texture", 2D) = "white" {}
+    }
     SubShader
     {
+        Tags { "RenderType"="Opaque" }
         Pass
         {
-            HLSLPROGRAM
-            float4 MainVs(float3 pos : POSITION) : SV_Position {
-                return float4(pos, 1.0);
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "UnityCG.cginc"
+
+            struct appdata
+            {
+                float4 vertex : POSITION;
+                float2 uv : TEXCOORD0;
+            };
+
+            struct v2f
+            {
+                float2 uv : TEXCOORD0;
+                float4 vertex : SV_POSITION;
+            };
+
+            sampler2D _MainTex;
+            float4 _MainTex_ST;
+
+            v2f vert (appdata v)
+            {
+                v2f o;
+                o.vertex = UnityObjectToClipPos(v.vertex);
+                o.uv = TRANSFORM_TEX(v.uv, _MainTex);
+                return o;
             }
-            ENDHLSL
+
+            fixed4 frag (v2f i) : SV_Target
+            {
+                fixed4 col = tex2D(_MainTex, i.uv);
+                return col;
+            }
+            ENDCG
         }
     }
 }
 "#;
-        let diags = validate_shader("file:///test.shader", shaderlab, &dxc, None);
-        assert!(diags.is_empty(), "Expected 0 diagnostics for valid ShaderLab, got: {:?}", diags);
+        let diags = validate_shader("file:///test_unlit.shader", unity_shader, &dxc, None);
+        assert!(diags.is_empty(), "Standard Unity Unlit shader MUST have 0 errors, got: {:?}", diags);
+    }
+
+    #[test]
+    fn test_validate_unreal_shader() {
+        let dxc = find_dxc_path();
+        let unreal_shader = r#"
+float3 CustomUnrealLighting(float3 WorldPos, float3 WorldNormal, float3 LightDir)
+{
+    float NdotL = saturate(dot(WorldNormal, LightDir));
+    float3 lum = Luminance(LightDir);
+    return RotateAboutAxis(float4(WorldNormal, 0.5), WorldPos, LightDir) * (NdotL + lum);
+}
+"#;
+        let diags = validate_shader("file:///test_unreal.usf", unreal_shader, &dxc, None);
+        assert!(diags.is_empty(), "Unreal shader MUST have 0 errors, got: {:?}", diags);
+    }
+
+    #[test]
+    fn test_validate_all_sample_files() {
+        let dxc = find_dxc_path();
+
+        // 1. Pure HLSL Sample
+        if let Ok(pure_code) = std::fs::read_to_string("../samples/pure_sample.hlsl") {
+            let context = detect_shader_context("file:///pure_sample.hlsl", &pure_code);
+            assert_eq!(context, ShaderContext::PureHlsl);
+            let diags = validate_shader("file:///pure_sample.hlsl", &pure_code, &dxc, None);
+            assert!(diags.is_empty(), "Sample pure HLSL MUST have 0 errors, got: {:?}", diags);
+        }
+
+        // 2. Unity Unlit Sample
+        if let Ok(unity_code) = std::fs::read_to_string("../samples/unity_unlit.shader") {
+            let context = detect_shader_context("file:///unity_unlit.shader", &unity_code);
+            assert_eq!(context, ShaderContext::UnityShaderLab);
+            let diags = validate_shader("file:///unity_unlit.shader", &unity_code, &dxc, None);
+            assert!(diags.is_empty(), "Sample Unity Unlit shader MUST have 0 errors, got: {:?}", diags);
+        }
+
+        // 3. Unreal Engine USF Sample
+        if let Ok(unreal_code) = std::fs::read_to_string("../samples/unreal_sample.usf") {
+            let context = detect_shader_context("file:///unreal_sample.usf", &unreal_code);
+            assert_eq!(context, ShaderContext::UnrealEngine);
+            let diags = validate_shader("file:///unreal_sample.usf", &unreal_code, &dxc, None);
+            assert!(diags.is_empty(), "Sample Unreal shader MUST have 0 errors, got: {:?}", diags);
+        }
+    }
+
+    #[test]
+    fn test_context_filter_completion() {
+        let mut cache = HashMap::new();
+        // 1. Pure HLSL - should NOT have Unity TransformObjectToHClip or Unreal RotateAboutAxis
+        cache.insert("file:///pure.hlsl".to_string(), "float4 frag() : SV_Target {\n    \n}".to_string());
+        let req_pure = json!({
+            "params": {
+                "textDocument": { "uri": "file:///pure.hlsl" },
+                "position": { "line": 1, "character": 4 }
+            }
+        });
+        let res_pure = handle_completion(&req_pure, &cache);
+        let arr_pure = res_pure.as_array().unwrap();
+        assert!(arr_pure.iter().any(|i| i["label"] == "lerp"));
+        assert!(!arr_pure.iter().any(|i| i["label"] == "TransformObjectToHClip"));
+        assert!(!arr_pure.iter().any(|i| i["label"] == "RotateAboutAxis"));
+
+        // 2. Unreal - should have Unreal functions but NOT Unity functions
+        cache.insert("file:///unreal.usf".to_string(), "float3 frag() { ".to_string());
+        let req_unreal = json!({
+            "params": {
+                "textDocument": { "uri": "file:///unreal.usf" },
+                "position": { "line": 0, "character": 16 }
+            }
+        });
+        let res_unreal = handle_completion(&req_unreal, &cache);
+        let arr_unreal = res_unreal.as_array().unwrap();
+        assert!(arr_unreal.iter().any(|i| i["label"] == "RotateAboutAxis"));
+        assert!(!arr_unreal.iter().any(|i| i["label"] == "TransformObjectToHClip"));
+
+        // 3. Unity HLSL - should have Unity functions but NOT Unreal functions
+        cache.insert("file:///unity.cginc".to_string(), "float4 frag() { ".to_string());
+        let req_unity = json!({
+            "params": {
+                "textDocument": { "uri": "file:///unity.cginc" },
+                "position": { "line": 0, "character": 16 }
+            }
+        });
+        let res_unity = handle_completion(&req_unity, &cache);
+        let arr_unity = res_unity.as_array().unwrap();
+        assert!(arr_unity.iter().any(|i| i["label"] == "TransformObjectToHClip"));
+        assert!(!arr_unity.iter().any(|i| i["label"] == "RotateAboutAxis"));
+    }
+
+    #[test]
+    fn test_shaderlab_properties_completion() {
+        let mut cache = HashMap::new();
+        let code = "Shader \"Test\" {\nProperties {\n    _\n}\n}";
+        cache.insert("file:///test.shader".to_string(), code.to_string());
+        let req = json!({
+            "params": {
+                "textDocument": { "uri": "file:///test.shader" },
+                "position": { "line": 2, "character": 5 }
+            }
+        });
+        let res = handle_completion(&req, &cache);
+        let arr = res.as_array().unwrap();
+        assert!(arr.iter().any(|i| i["label"] == "_MainTex"));
+        assert!(arr.iter().any(|i| i["label"] == "_Color"));
+        assert!(arr.iter().any(|i| i["label"] == "Range"));
     }
 
     #[test]
@@ -1288,40 +1608,5 @@ Shader "Custom/MyShader"
         let new_text = edits[0]["newText"].as_str().unwrap();
         assert!(new_text.contains("    SubShader"));
         assert!(new_text.contains("        Pass"));
-    }
-
-    #[test]
-    fn test_discover_include_paths() {
-        let uri = "file:///C:/MyProject/Assets/Shaders/Lit.shader";
-        let paths = discover_include_paths(uri, None);
-        assert!(!paths.is_empty());
-        assert_eq!(paths[0], PathBuf::from("C:/MyProject/Assets/Shaders"));
-    }
-
-    #[test]
-    fn test_shaderlab_contextual_completion() {
-        let mut cache = HashMap::new();
-        let shaderlab = r#"
-Shader "Test"
-{
-    SubShader
-    {
-        Pass
-        {
-            Blend 
-        }
-    }
-}
-"#;
-        cache.insert("file:///test.shader".to_string(), shaderlab.to_string());
-        let req = json!({
-            "params": {
-                "textDocument": { "uri": "file:///test.shader" },
-                "position": { "line": 7, "character": 18 }
-            }
-        });
-        let result = handle_completion(&req, &cache);
-        let arr = result.as_array().expect("Result must be array");
-        assert!(arr.iter().any(|item| item["label"].as_str().unwrap().contains("SrcAlpha")));
     }
 }

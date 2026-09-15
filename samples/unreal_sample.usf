@@ -1,0 +1,21 @@
+// Unreal Engine USF Shader Sample
+// Context: UnrealEngine (.usf / .ush)
+
+struct FMaterialPixelParameters
+{
+    float3 WorldPosition;
+    float3 WorldNormal;
+    float4 ScreenPosition;
+    float2 TexCoords[4];
+};
+
+float3 CustomUnrealLighting(FMaterialPixelParameters Parameters, float3 LightDir, float LightIntensity)
+{
+    float NdotL = saturate(dot(Parameters.WorldNormal, LightDir));
+    float3 luminance = Luminance(LightDir);
+    
+    // Test Unreal Engine math intrinsic RotateAboutAxis
+    float3 rotatedPos = RotateAboutAxis(float4(Parameters.WorldNormal, 0.5), Parameters.WorldPosition, LightDir);
+    
+    return rotatedPos * (NdotL * LightIntensity + luminance);
+}

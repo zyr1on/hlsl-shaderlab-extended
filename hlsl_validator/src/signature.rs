@@ -560,6 +560,25 @@ pub fn get_signature_help(
         None => return json!(null),
     };
 
+    // 0. ShaderLab Built-in Property Signatures (e.g. Range(min, max))
+    if fn_name == "Range" {
+        return json!({
+            "signatures": [{
+                "label": "Range(float min, float max)",
+                "parameters": [
+                    { "label": "float min" },
+                    { "label": "float max" }
+                ],
+                "documentation": {
+                    "kind": "markdown",
+                    "value": "### `Range(min, max)`\n*Unity ShaderLab Property Type*\n\nCreates a floating-point property bounded by an interactive slider between `min` and `max` in the Unity Material Inspector."
+                }
+            }],
+            "activeSignature": 0,
+            "activeParameter": active_param
+        });
+    }
+
     // 1. Built-in HLSL Intrinsics (Microsoft reference)
     if let Some(builtin) = docs::find_builtin_function(&fn_name) {
         let signatures: Vec<Value> = builtin
