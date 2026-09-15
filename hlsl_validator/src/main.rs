@@ -796,19 +796,104 @@ fn handle_completion(
                             return json!(method_items);
                         }
 
-                        // Vector swizzles
+                        // Matrix element access (_m00.._m33, _11.._44)
+                        let is_matrix = target_type.contains('x') || target_type == "matrix";
+                        if is_matrix {
+                            let (rows, cols) = if target_type.contains("4x4") || target_type == "matrix" {
+                                (4, 4)
+                            } else if target_type.contains("3x3") {
+                                (3, 3)
+                            } else if target_type.contains("2x2") {
+                                (2, 2)
+                            } else if target_type.contains("4x3") {
+                                (4, 3)
+                            } else if target_type.contains("3x4") {
+                                (3, 4)
+                            } else {
+                                (4, 4)
+                            };
+
+                            let mut matrix_items = Vec::new();
+                            let mut idx = 0;
+                            // 0-based: _m00, _m01, ...
+                            for r in 0..rows {
+                                for c in 0..cols {
+                                    let label = format!("_m{r}{c}");
+                                    matrix_items.push(json!({
+                                        "label": label,
+                                        "kind": 5, // Field
+                                        "detail": format!("Matrix element [{r}][{c}] (0-based)"),
+                                        "insertText": label,
+                                        "sortText": format!("00_{:02}_{}", idx, label),
+                                    }));
+                                    idx += 1;
+                                }
+                            }
+                            // 1-based: _11, _12, ...
+                            for r in 1..=rows {
+                                for c in 1..=cols {
+                                    let label = format!("_{r}{c}");
+                                    matrix_items.push(json!({
+                                        "label": label,
+                                        "kind": 5, // Field
+                                        "detail": format!("Matrix element [{r}][{c}] (1-based)"),
+                                        "insertText": label,
+                                        "sortText": format!("01_{:02}_{}", idx, label),
+                                    }));
+                                    idx += 1;
+                                }
+                            }
+                            return json!(matrix_items);
+                        }
+
+                        // Vector swizzles (Dimension-aware)
                         let is_vec = target_type.starts_with("float")
                             || target_type.starts_with("half")
                             || target_type.starts_with("int")
-                            || target_type.starts_with("uint");
+                            || target_type.starts_with("uint")
+                            || target_type.starts_with("fixed")
+                            || target_type.starts_with("bool");
 
                         if is_vec {
-                            let swizzles = [
-                                "x", "y", "z", "w",
-                                "xy", "xyz", "xyzw",
-                                "r", "g", "b", "a",
-                                "rgb", "rgba",
-                            ];
+                            let dim = if target_type.ends_with('4') {
+                                4
+                            } else if target_type.ends_with('3') {
+                                3
+                            } else if target_type.ends_with('2') {
+                                2
+                            } else {
+                                4
+                            };
+
+                            let swizzles: &[&str] = match dim {
+                                2 => &[
+                                    "x", "y", "r", "g",
+                                    "xy", "yx", "xx", "yy",
+                                    "rg", "gr", "rr", "gg",
+                                ],
+                                3 => &[
+                                    "x", "y", "z", "r", "g", "b",
+                                    "xy", "xz", "yz", "yx", "zx", "zy", "xx", "yy", "zz",
+                                    "rg", "rb", "gb", "gr", "br", "bg", "rr", "gg", "bb",
+                                    "xyz", "xzy", "yxz", "yzx", "zxy", "zyx",
+                                    "xxx", "yyy", "zzz",
+                                    "rgb", "rbg", "grb", "gbr", "brg", "bgr",
+                                ],
+                                _ => &[
+                                    "x", "y", "z", "w", "r", "g", "b", "a",
+                                    "xy", "xz", "xw", "yz", "yw", "zw",
+                                    "yx", "zx", "wx", "zy", "wy", "wz",
+                                    "xx", "yy", "zz", "ww",
+                                    "rg", "rb", "ra", "gb", "ga", "ba",
+                                    "gr", "br", "ar", "bg", "ag", "ab",
+                                    "xyz", "xyw", "xzw", "yzw",
+                                    "zyx", "wyx", "wzx", "wzy",
+                                    "xxx", "yyy", "zzz", "www",
+                                    "rgb", "rga", "gba", "bgr",
+                                    "xyzw", "rgba", "bgra", "argb", "wzyx", "abgr",
+                                ],
+                            };
+
                             let items: Vec<Value> = swizzles.iter().enumerate().map(|(idx, sw)| {
                                 json!({
                                     "label": *sw,
@@ -989,12 +1074,19 @@ fn handle_completion(
         }
     }
 
-    // 7. Snippets
+    // 7. High-Productivity Snippets
     let snippets = [
         ("vert", "Vertex Shader function", "Varyings vert(Attributes input)\n{\n    Varyings output = (Varyings)0;\n    output.positionCS = TransformObjectToHClip(input.positionOS.xyz);\n    $0\n    return output;\n}"),
         ("frag", "Fragment/Pixel Shader function", "float4 frag(Varyings input) : SV_Target\n{\n    $0\n    return float4(1.0, 1.0, 1.0, 1.0);\n}"),
+        ("kernel", "Compute Shader kernel", "[numthreads(${1:8}, ${2:8}, ${3:1})]\nvoid ${4:CSMain}(uint3 id : SV_DispatchThreadID)\n{\n    $0\n}"),
         ("struct", "Struct declaration", "struct $1\n{\n    $0\n};"),
-        ("cbuffer", "Constant Buffer declaration", "cbuffer $1\n{\n    $0\n};"),
+        ("cbuffer", "Constant Buffer with register", "cbuffer $1 : register(b${2:0})\n{\n    $0\n};"),
+        ("tex2d", "Texture2D and SamplerState pair", "Texture2D $1 : register(t${2:0});\nSamplerState sampler_$1 : register(s${2:0});"),
+        ("for", "For loop", "for (int ${1:i} = 0; ${1:i} < ${2:count}; ++${1:i})\n{\n    $0\n}"),
+        ("while", "While loop", "while ($1)\n{\n    $0\n}"),
+        ("if", "If condition", "if ($1)\n{\n    $0\n}"),
+        ("ifelse", "If-Else statement", "if ($1)\n{\n    $2\n}\nelse\n{\n    $0\n}"),
+        ("switch", "Switch statement", "switch ($1)\n{\n    case $2:\n        break;\n    default:\n        break;\n}"),
     ];
     for (idx, (label, detail, snip)) in snippets.iter().enumerate() {
         items.push(json!({
@@ -1043,7 +1135,7 @@ fn main() {
     let dxc_path = find_dxc_path();
 
     let (tx, rx): (Sender<ValidationTask>, Receiver<ValidationTask>) = mpsc::channel();
-    let doc_cache: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mut doc_cache: HashMap<String, String> = HashMap::new();
     let workspace_root: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(
         env::var("WORKSPACE_ROOT").ok().map(PathBuf::from),
     ));
@@ -1176,9 +1268,7 @@ fn main() {
                     let uri = params["textDocument"]["uri"].as_str().unwrap_or("").to_string();
                     let text = params["textDocument"]["text"].as_str().unwrap_or("").to_string();
 
-                    if let Ok(mut cache) = doc_cache.lock() {
-                        cache.insert(uri.clone(), text.clone());
-                    }
+                    doc_cache.insert(uri.clone(), text.clone());
                     let _ = tx.send(ValidationTask { uri, content: text });
                 }
             }
@@ -1188,9 +1278,7 @@ fn main() {
                     if let Some(changes) = params["contentChanges"].as_array() {
                         if let Some(last_change) = changes.last() {
                             let text = last_change["text"].as_str().unwrap_or("").to_string();
-                            if let Ok(mut cache) = doc_cache.lock() {
-                                cache.insert(uri.clone(), text.clone());
-                            }
+                            doc_cache.insert(uri.clone(), text.clone());
                             let _ = tx.send(ValidationTask { uri, content: text });
                         }
                     }
@@ -1199,16 +1287,13 @@ fn main() {
             "textDocument/didClose" => {
                 if let Some(params) = msg.get("params") {
                     let uri = params["textDocument"]["uri"].as_str().unwrap_or("");
-                    if let Ok(mut cache) = doc_cache.lock() {
-                        cache.remove(uri);
-                    }
+                    doc_cache.remove(uri);
                     send_diagnostics(uri, &[]);
                 }
             }
             "textDocument/completion" => {
                 if let Some(id) = id {
-                    let cache = doc_cache.lock().map(|c| c.clone()).unwrap_or_default();
-                    let res = handle_completion(&msg, &cache);
+                    let res = handle_completion(&msg, &doc_cache);
                     write_lsp_response(id, res);
                 }
             }
@@ -1219,9 +1304,8 @@ fn main() {
                     let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
                     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
 
-                    let cache = doc_cache.lock().map(|c| c.clone()).unwrap_or_default();
-                    let doc = cache.get(uri).cloned().unwrap_or_default();
-                    let res = signature::get_signature_help(uri, &doc, line, col, &cache);
+                    let doc = doc_cache.get(uri).map(|s| s.as_str()).unwrap_or("");
+                    let res = signature::get_signature_help(uri, doc, line, col, &doc_cache);
                     write_lsp_response(id, res);
                 }
             }
@@ -1232,16 +1316,14 @@ fn main() {
                     let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
                     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
 
-                    let cache = doc_cache.lock().map(|c| c.clone()).unwrap_or_default();
-                    let doc = cache.get(uri).cloned().unwrap_or_default();
-                    let res = signature::get_hover_info(uri, &doc, line, col, &cache);
+                    let doc = doc_cache.get(uri).map(|s| s.as_str()).unwrap_or("");
+                    let res = signature::get_hover_info(uri, doc, line, col, &doc_cache);
                     write_lsp_response(id, res);
                 }
             }
             "textDocument/definition" => {
                 if let Some(id) = id {
-                    let cache = doc_cache.lock().map(|c| c.clone()).unwrap_or_default();
-                    let res = signature::handle_definition(&msg, &cache);
+                    let res = signature::handle_definition(&msg, &doc_cache);
                     write_lsp_response(id, res);
                 }
             }
@@ -1249,9 +1331,8 @@ fn main() {
                 if let Some(id) = id {
                     let params = &msg["params"];
                     let uri = params["textDocument"]["uri"].as_str().unwrap_or("");
-                    let cache = doc_cache.lock().map(|c| c.clone()).unwrap_or_default();
-                    let doc = cache.get(uri).cloned().unwrap_or_default();
-                    let symbols = signature::get_document_symbols(&doc);
+                    let doc = doc_cache.get(uri).map(|s| s.as_str()).unwrap_or("");
+                    let symbols = signature::get_document_symbols(doc);
                     write_lsp_response(id, symbols);
                 }
             }
@@ -1263,9 +1344,8 @@ fn main() {
                     let tab_size = options["tabSize"].as_u64().unwrap_or(4) as usize;
                     let insert_spaces = options["insertSpaces"].as_bool().unwrap_or(true);
 
-                    let cache = doc_cache.lock().map(|c| c.clone()).unwrap_or_default();
-                    let doc = cache.get(uri).cloned().unwrap_or_default();
-                    let edits = format_document(&doc, tab_size, insert_spaces);
+                    let doc = doc_cache.get(uri).map(|s| s.as_str()).unwrap_or("");
+                    let edits = format_document(doc, tab_size, insert_spaces);
                     write_lsp_response(id, json!(edits));
                 }
             }
@@ -1763,5 +1843,96 @@ Shader "Custom/MyShader"
         let new_text = edits[0]["newText"].as_str().unwrap();
         assert!(new_text.contains("    SubShader"));
         assert!(new_text.contains("        Pass"));
+    }
+
+    #[test]
+    fn test_matrix_element_completion() {
+        let mut cache = HashMap::new();
+        let code = r#"
+void TestMatrix()
+{
+    float4x4 mvp;
+    float val = mvp.
+}
+"#;
+        cache.insert("file:///test.hlsl".to_string(), code.to_string());
+        let req = json!({
+            "params": {
+                "textDocument": { "uri": "file:///test.hlsl" },
+                "position": { "line": 4, "character": 20 }
+            }
+        });
+        let result = handle_completion(&req, &cache);
+        let arr = result.as_array().expect("Result must be array");
+        assert!(arr.iter().any(|item| item["label"] == "_m00"), "Matrix should offer _m00");
+        assert!(arr.iter().any(|item| item["label"] == "_m33"), "Matrix should offer _m33");
+        assert!(arr.iter().any(|item| item["label"] == "_11"), "Matrix should offer _11");
+        assert!(arr.iter().any(|item| item["label"] == "_44"), "Matrix should offer _44");
+    }
+
+    #[test]
+    fn test_vector_swizzle_dimension() {
+        let mut cache = HashMap::new();
+        let code = r#"
+void TestVec()
+{
+    float2 uv;
+    float val = uv.
+}
+"#;
+        cache.insert("file:///test.hlsl".to_string(), code.to_string());
+        let req = json!({
+            "params": {
+                "textDocument": { "uri": "file:///test.hlsl" },
+                "position": { "line": 4, "character": 19 }
+            }
+        });
+        let result = handle_completion(&req, &cache);
+        let arr = result.as_array().expect("Result must be array");
+        assert!(arr.iter().any(|item| item["label"] == "x"), "float2 should have x");
+        assert!(arr.iter().any(|item| item["label"] == "y"), "float2 should have y");
+        assert!(arr.iter().any(|item| item["label"] == "xy"), "float2 should have xy");
+        assert!(!arr.iter().any(|item| item["label"] == "z"), "float2 MUST NOT have z");
+        assert!(!arr.iter().any(|item| item["label"] == "w"), "float2 MUST NOT have w");
+        assert!(!arr.iter().any(|item| item["label"] == "rgba"), "float2 MUST NOT have rgba");
+    }
+
+    #[test]
+    fn test_extended_semantics() {
+        let mut cache = HashMap::new();
+        let code = "float4 col : SV_";
+        cache.insert("file:///test.hlsl".to_string(), code.to_string());
+        let req = json!({
+            "params": {
+                "textDocument": { "uri": "file:///test.hlsl" },
+                "position": { "line": 0, "character": 16 }
+            }
+        });
+        let result = handle_completion(&req, &cache);
+        let arr = result.as_array().expect("Result must be array");
+        assert!(arr.iter().any(|item| item["label"] == "SV_Target7"), "Should have SV_Target7");
+        assert!(arr.iter().any(|item| item["label"] == "SV_DepthGreaterEqual"), "Should have SV_DepthGreaterEqual");
+        assert!(arr.iter().any(|item| item["label"] == "SV_IsFrontFace"), "Should have SV_IsFrontFace");
+        assert!(arr.iter().any(|item| item["label"] == "SV_Barycentrics"), "Should have SV_Barycentrics");
+        assert!(arr.iter().any(|item| item["label"] == "BINORMAL0"), "Should have BINORMAL0");
+    }
+
+    #[test]
+    fn test_shader_snippets() {
+        let mut cache = HashMap::new();
+        let code = "\n";
+        cache.insert("file:///test.hlsl".to_string(), code.to_string());
+        let req = json!({
+            "params": {
+                "textDocument": { "uri": "file:///test.hlsl" },
+                "position": { "line": 0, "character": 0 }
+            }
+        });
+        let result = handle_completion(&req, &cache);
+        let arr = result.as_array().expect("Result must be array");
+        assert!(arr.iter().any(|item| item["label"] == "kernel"), "Should have kernel snippet");
+        assert!(arr.iter().any(|item| item["label"] == "tex2d"), "Should have tex2d snippet");
+        assert!(arr.iter().any(|item| item["label"] == "cbuffer"), "Should have cbuffer snippet");
+        assert!(arr.iter().any(|item| item["label"] == "for"), "Should have for snippet");
     }
 }

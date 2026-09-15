@@ -14,6 +14,66 @@ pub struct BuiltinFunction {
 
 pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
     // ------------------------------------------------------------------------
+    // Vector Constructors
+    // ------------------------------------------------------------------------
+    BuiltinFunction {
+        name: "float4",
+        description: "### `float4`\n*HLSL Vector Constructor*\n\nConstructs a 4-component floating-point vector from scalar or vector components.",
+        overloads: &[
+            BuiltinOverload { label: "float4(float x, float y, float z, float w)", params: &["float x", "float y", "float z", "float w"] },
+            BuiltinOverload { label: "float4(float3 xyz, float w)", params: &["float3 xyz", "float w"] },
+            BuiltinOverload { label: "float4(float x, float3 yzw)", params: &["float x", "float3 yzw"] },
+            BuiltinOverload { label: "float4(float2 xy, float2 zw)", params: &["float2 xy", "float2 zw"] },
+            BuiltinOverload { label: "float4(float2 xy, float z, float w)", params: &["float2 xy", "float z", "float w"] },
+            BuiltinOverload { label: "float4(float s)", params: &["float s"] },
+        ],
+    },
+    BuiltinFunction {
+        name: "float3",
+        description: "### `float3`\n*HLSL Vector Constructor*\n\nConstructs a 3-component floating-point vector from scalar or vector components.",
+        overloads: &[
+            BuiltinOverload { label: "float3(float x, float y, float z)", params: &["float x", "float y", "float z"] },
+            BuiltinOverload { label: "float3(float2 xy, float z)", params: &["float2 xy", "float z"] },
+            BuiltinOverload { label: "float3(float x, float2 yz)", params: &["float x", "float2 yz"] },
+            BuiltinOverload { label: "float3(float s)", params: &["float s"] },
+        ],
+    },
+    BuiltinFunction {
+        name: "float2",
+        description: "### `float2`\n*HLSL Vector Constructor*\n\nConstructs a 2-component floating-point vector.",
+        overloads: &[
+            BuiltinOverload { label: "float2(float x, float y)", params: &["float x", "float y"] },
+            BuiltinOverload { label: "float2(float s)", params: &["float s"] },
+        ],
+    },
+    BuiltinFunction {
+        name: "half4",
+        description: "### `half4`\n*HLSL Half-Precision Vector Constructor*\n\nConstructs a 4-component half-precision vector.",
+        overloads: &[
+            BuiltinOverload { label: "half4(half x, half y, half z, half w)", params: &["half x", "half y", "half z", "half w"] },
+            BuiltinOverload { label: "half4(half3 xyz, half w)", params: &["half3 xyz", "half w"] },
+            BuiltinOverload { label: "half4(half2 xy, half2 zw)", params: &["half2 xy", "half2 zw"] },
+            BuiltinOverload { label: "half4(half s)", params: &["half s"] },
+        ],
+    },
+    BuiltinFunction {
+        name: "half3",
+        description: "### `half3`\n*HLSL Half-Precision Vector Constructor*\n\nConstructs a 3-component half-precision vector.",
+        overloads: &[
+            BuiltinOverload { label: "half3(half x, half y, half z)", params: &["half x", "half y", "half z"] },
+            BuiltinOverload { label: "half3(half2 xy, half z)", params: &["half2 xy", "half z"] },
+            BuiltinOverload { label: "half3(half s)", params: &["half s"] },
+        ],
+    },
+    BuiltinFunction {
+        name: "half2",
+        description: "### `half2`\n*HLSL Half-Precision Vector Constructor*\n\nConstructs a 2-component half-precision vector.",
+        overloads: &[
+            BuiltinOverload { label: "half2(half x, half y)", params: &["half x", "half y"] },
+            BuiltinOverload { label: "half2(half s)", params: &["half s"] },
+        ],
+    },
+    // ------------------------------------------------------------------------
     // Interpolation & Clamping (Common HLSL Intrinsics)
     // ------------------------------------------------------------------------
     BuiltinFunction {
@@ -1664,26 +1724,83 @@ pub static BUILTIN_TYPES: &[&str] = &[
 ];
 
 pub static BUILTIN_VARIABLES: &[(&str, &str)] = &[
-    // HLSL System-Value Semantics
-    ("SV_Position", "System-Value: Homogeneous clip-space vertex position (`float4`)."),
+    // HLSL System-Value Semantics (Pixel / Output)
     ("SV_Target", "System-Value: Render target output 0 color (`float4`)."),
     ("SV_Target0", "System-Value: Render target output 0 color (`float4`)."),
     ("SV_Target1", "System-Value: Render target output 1 color (`float4`)."),
+    ("SV_Target2", "System-Value: Render target output 2 color (`float4`)."),
+    ("SV_Target3", "System-Value: Render target output 3 color (`float4`)."),
+    ("SV_Target4", "System-Value: Render target output 4 color (`float4`)."),
+    ("SV_Target5", "System-Value: Render target output 5 color (`float4`)."),
+    ("SV_Target6", "System-Value: Render target output 6 color (`float4`)."),
+    ("SV_Target7", "System-Value: Render target output 7 color (`float4`)."),
     ("SV_Depth", "System-Value: Output pixel depth (`float`)."),
-    ("SV_VertexID", "System-Value: Per-vertex ID generated by GPU (`uint`)."),
-    ("SV_InstanceID", "System-Value: Per-instance ID generated by GPU (`uint`)."),
-    ("SV_DispatchThreadID", "System-Value: Global compute thread index (`uint3`)."),
-    ("SV_GroupID", "System-Value: Compute group index (`uint3`)."),
-    ("SV_GroupIndex", "System-Value: Flattened thread index within group (`uint`)."),
-    ("SV_GroupThreadID", "System-Value: Thread index within compute group (`uint3`)."),
-    // Classic Vertex Semantics
+    ("SV_DepthGreaterEqual", "System-Value: Output depth must be >= rasterized depth (`float`)."),
+    ("SV_DepthLessEqual", "System-Value: Output depth must be <= rasterized depth (`float`)."),
+    ("SV_Coverage", "System-Value: Input/output MSAA sample coverage mask (`uint`)."),
+    ("SV_InnerCoverage", "System-Value: MSAA inner-conservative coverage mask (`uint`)."),
+    ("SV_IsFrontFace", "System-Value: Specifies whether primitive is front-facing (`bool`)."),
+    ("SV_SampleIndex", "System-Value: MSAA sample index (`uint`)."),
+    ("SV_ShadingRate", "System-Value: Variable Rate Shading (VRS) mask (`uint`)."),
+    ("SV_Barycentrics", "System-Value: Pixel barycentric coordinates (`float3`)."),
+    ("SV_RenderTargetArrayIndex", "System-Value: Target slice in a render-target array (`uint`)."),
+    ("SV_ViewportArrayIndex", "System-Value: Viewport index for geometry rendering (`uint`)."),
+
+    // HLSL System-Value Semantics (Vertex / Geometry)
+    ("SV_Position", "System-Value: Homogeneous clip-space vertex position (`float4`)."),
+    ("SV_VertexID", "System-Value: Per-vertex identifier generated by GPU (`uint`)."),
+    ("SV_InstanceID", "System-Value: Per-instance identifier generated by GPU (`uint`)."),
+    ("SV_PrimitiveID", "System-Value: Primitive index in geometry/pixel shader (`uint`)."),
+    ("SV_GSInstanceID", "System-Value: Geometry shader instance identifier (`uint`)."),
+    ("SV_ClipDistance", "System-Value: Hardware user clipping distance plane (`float`)."),
+    ("SV_ClipDistance0", "System-Value: Hardware user clipping distance plane 0 (`float`)."),
+    ("SV_ClipDistance1", "System-Value: Hardware user clipping distance plane 1 (`float`)."),
+    ("SV_ClipDistance2", "System-Value: Hardware user clipping distance plane 2 (`float`)."),
+    ("SV_ClipDistance3", "System-Value: Hardware user clipping distance plane 3 (`float`)."),
+    ("SV_CullDistance", "System-Value: Hardware user culling distance plane (`float`)."),
+    ("SV_CullDistance0", "System-Value: Hardware user culling distance plane 0 (`float`)."),
+    ("SV_CullDistance1", "System-Value: Hardware user culling distance plane 1 (`float`)."),
+    ("SV_CullDistance2", "System-Value: Hardware user culling distance plane 2 (`float`)."),
+    ("SV_CullDistance3", "System-Value: Hardware user culling distance plane 3 (`float`)."),
+
+    // HLSL System-Value Semantics (Compute / Mesh Shaders)
+    ("SV_DispatchThreadID", "System-Value: Global compute thread index across all groups (`uint3`)."),
+    ("SV_GroupID", "System-Value: Compute thread group index (`uint3`)."),
+    ("SV_GroupIndex", "System-Value: Flattened 1D thread index within current group (`uint`)."),
+    ("SV_GroupThreadID", "System-Value: 3D thread index within current compute group (`uint3`)."),
+    ("SV_DispatchGrid", "System-Value: Amplification shader dispatch grid dimension (`uint3`)."),
+
+    // Classic Vertex / Interpolator Semantics
     ("POSITION", "Vertex attribute semantic: Object-space vertex position."),
+    ("POSITION0", "Vertex attribute semantic: Object-space vertex position 0."),
+    ("POSITION1", "Vertex attribute semantic: Object-space vertex position 1."),
     ("NORMAL", "Vertex attribute semantic: Surface normal vector."),
+    ("NORMAL0", "Vertex attribute semantic: Surface normal vector 0."),
+    ("NORMAL1", "Vertex attribute semantic: Surface normal vector 1."),
     ("TANGENT", "Vertex attribute semantic: Surface tangent vector."),
-    ("TEXCOORD0", "Vertex attribute or interpolator semantic: UV coordinate channel 0."),
-    ("TEXCOORD1", "Vertex attribute or interpolator semantic: UV coordinate channel 1."),
-    ("COLOR", "Vertex attribute semantic: Per-vertex color."),
-    ("COLOR0", "Vertex attribute semantic: Per-vertex primary color."),
+    ("TANGENT0", "Vertex attribute semantic: Surface tangent vector 0."),
+    ("TANGENT1", "Vertex attribute semantic: Surface tangent vector 1."),
+    ("BINORMAL", "Vertex attribute semantic: Surface binormal/bitangent vector."),
+    ("BINORMAL0", "Vertex attribute semantic: Surface binormal/bitangent vector 0."),
+    ("BINORMAL1", "Vertex attribute semantic: Surface binormal/bitangent vector 1."),
+    ("TEXCOORD0", "Vertex attribute / interpolator semantic: UV coordinate channel 0."),
+    ("TEXCOORD1", "Vertex attribute / interpolator semantic: UV coordinate channel 1."),
+    ("TEXCOORD2", "Vertex attribute / interpolator semantic: UV coordinate channel 2."),
+    ("TEXCOORD3", "Vertex attribute / interpolator semantic: UV coordinate channel 3."),
+    ("TEXCOORD4", "Vertex attribute / interpolator semantic: UV coordinate channel 4."),
+    ("TEXCOORD5", "Vertex attribute / interpolator semantic: UV coordinate channel 5."),
+    ("TEXCOORD6", "Vertex attribute / interpolator semantic: UV coordinate channel 6."),
+    ("TEXCOORD7", "Vertex attribute / interpolator semantic: UV coordinate channel 7."),
+    ("COLOR", "Vertex attribute / interpolator semantic: Primary color."),
+    ("COLOR0", "Vertex attribute / interpolator semantic: Per-vertex primary color channel 0."),
+    ("COLOR1", "Vertex attribute / interpolator semantic: Per-vertex secondary color channel 1."),
+    ("BLENDWEIGHT", "Vertex attribute semantic: Bone blend weight."),
+    ("BLENDWEIGHT0", "Vertex attribute semantic: Bone blend weight 0."),
+    ("BLENDWEIGHT1", "Vertex attribute semantic: Bone blend weight 1."),
+    ("BLENDINDICES", "Vertex attribute semantic: Bone blend indices."),
+    ("BLENDINDICES0", "Vertex attribute semantic: Bone blend indices 0."),
+    ("BLENDINDICES1", "Vertex attribute semantic: Bone blend indices 1."),
+    ("PSIZE", "Vertex attribute semantic: Point size for point sprites."),
 ];
 
 pub static BUILTIN_KEYWORDS: &[&str] = &[

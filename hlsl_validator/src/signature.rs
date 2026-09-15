@@ -400,10 +400,10 @@ pub fn parse_local_var_decl(line: &str, line_idx: usize) -> Option<LocalVar> {
     None
 }
 
-pub fn find_enclosing_function<'a>(
-    funcs: &'a [FunctionSignature],
+pub fn find_enclosing_function(
+    funcs: &[FunctionSignature],
     line_idx: usize,
-) -> Option<&'a FunctionSignature> {
+) -> Option<&FunctionSignature> {
     funcs.iter().find(|f| line_idx >= f.line && line_idx <= f.body_end_line)
 }
 
@@ -1285,8 +1285,8 @@ pub fn get_document_symbols(text: &str) -> Value {
                     let mut end_line = i;
                     let mut children = Vec::new();
 
-                    for j in i..lines.len() {
-                        let cur = lines[j].trim();
+                    for (j, line_item) in lines.iter().enumerate().skip(i) {
+                        let cur = line_item.trim();
                         let open_b = cur.chars().filter(|&c| c == '{').count();
                         let close_b = cur.chars().filter(|&c| c == '}').count();
                         brace_depth += open_b;
@@ -1305,11 +1305,11 @@ pub fn get_document_symbols(text: &str) -> Value {
                                         "kind": 8, // Field
                                         "range": {
                                             "start": { "line": j, "character": 0 },
-                                            "end": { "line": j, "character": lines[j].len() }
+                                            "end": { "line": j, "character": line_item.len() }
                                         },
                                         "selectionRange": {
                                             "start": { "line": j, "character": 0 },
-                                            "end": { "line": j, "character": lines[j].len() }
+                                            "end": { "line": j, "character": line_item.len() }
                                         }
                                     }));
                                 }
@@ -1345,24 +1345,12 @@ pub fn get_document_symbols(text: &str) -> Value {
         i += 1;
     }
 
-    // 3. Scan user functions
+    // 3. Scan user functions (using pre-calculated body_end_line for O(1) performance)
     let funcs = scan_user_functions(text, None, None);
     for f in funcs {
         let start_line = f.line;
-        let mut brace_depth = 0;
-        let mut end_line = start_line;
-
-        for j in start_line..lines.len() {
-            let cur = lines[j];
-            let open_b = cur.chars().filter(|&c| c == '{').count();
-            let close_b = cur.chars().filter(|&c| c == '}').count();
-            brace_depth += open_b;
-            if brace_depth > 0 && brace_depth <= close_b {
-                end_line = j;
-                break;
-            }
-            brace_depth = brace_depth.saturating_sub(close_b);
-        }
+        let end_line = f.body_end_line.max(start_line);
+        let end_line_len = lines.get(end_line).map(|l| l.len()).unwrap_or(0);
 
         symbols.push(json!({
             "name": f.name,
@@ -1370,7 +1358,7 @@ pub fn get_document_symbols(text: &str) -> Value {
             "kind": 12, // Function
             "range": {
                 "start": { "line": start_line, "character": 0 },
-                "end": { "line": end_line, "character": lines.get(end_line).map(|l| l.len()).unwrap_or(0) }
+                "end": { "line": end_line, "character": end_line_len }
             },
             "selectionRange": {
                 "start": { "line": start_line, "character": f.col },
