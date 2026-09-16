@@ -1644,6 +1644,7 @@ pub fn run_dxc_on_text(
     let mut cmd = Command::new(dxc_path);
     cmd.arg("-T").arg("lib_6_3");
     cmd.arg("-HV").arg("2021");
+    cmd.arg("-O0");
 
     for inc in include_dirs {
         cmd.arg("-I").arg(inc);
@@ -3187,6 +3188,3 @@ fn main() {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

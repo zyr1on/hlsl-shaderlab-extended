@@ -48,9 +48,18 @@
   "inout"
   "uniform"
   "groupshared"
+  "shared"
   "precise"
   "row_major"
   "column_major"
+  "globallycoherent"
+  "centroid"
+  "noperspective"
+  "nointerpolation"
+  "sample"
+  "linear"
+  "snorm"
+  "unorm"
 ] @keyword
 
 (preproc_directive) @keyword
@@ -67,8 +76,12 @@
 ] @type
 
 (semantics) @attribute
+(hlsl_attribute) @attribute
 (number_literal) @number
+(char_literal) @string
 (string_literal) @string
+(system_lib_string) @string
+(escape_sequence) @string.escape
 (comment) @comment
 
 ; =============================================================================
