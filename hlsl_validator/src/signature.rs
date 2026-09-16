@@ -17,12 +17,6 @@ const INVALID_NAMES: &[&str] = &[
 
 const CONTROL_KEYWORDS: &[&str] = &["if", "for", "while", "switch", "catch", "return"];
 
-#[allow(dead_code)]
-pub const STORAGE_QUALIFIERS: &[&str] = &[
-    "static", "const", "inline", "in", "out", "inout", "uniform",
-    "column_major", "row_major", "precise", "groupshared",
-];
-
 pub fn safe_floor_char_boundary(s: &str, mut index: usize) -> usize {
     if index >= s.len() {
         return s.len();
@@ -31,14 +25,6 @@ pub fn safe_floor_char_boundary(s: &str, mut index: usize) -> usize {
         index -= 1;
     }
     index
-}
-
-#[allow(dead_code)]
-pub fn char_col_to_byte_idx(s: &str, char_col: usize) -> usize {
-    s.char_indices()
-        .nth(char_col)
-        .map(|(idx, _)| idx)
-        .unwrap_or(s.len())
 }
 
 pub fn extract_word_at_pos(line: &str, col_idx: usize) -> &str {
@@ -96,26 +82,6 @@ pub fn find_identifier_in_line(line: &str, ident: &str) -> Option<usize> {
     None
 }
 
-
-#[allow(dead_code)]
-pub const KNOWN_BASE_TYPES: &[&str] = &[
-    "float", "float2", "float3", "float4",
-    "half", "half2", "half3", "half4",
-    "int", "int2", "int3", "int4",
-    "uint", "uint2", "uint3", "uint4",
-    "bool", "bool2", "bool3", "bool4",
-    "double",
-    "float4x4", "float3x3", "float2x2",
-    "half4x4", "half3x3", "matrix",
-    "Texture2D", "Texture2DArray", "Texture3D", "TextureCube",
-    "SamplerState", "SamplerComparisonState",
-    "sampler2D", "samplerCUBE",
-    "cbuffer", "tbuffer",
-    "StructuredBuffer", "RWStructuredBuffer",
-    "ByteAddressBuffer", "RWByteAddressBuffer",
-];
-
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariableSymbol {
     pub name: String,
@@ -128,7 +94,6 @@ pub struct VariableSymbol {
     pub file_uri: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionParam {
     pub name: String,
@@ -137,7 +102,6 @@ pub struct FunctionParam {
     pub col: usize,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalVar {
     pub name: String,
@@ -146,11 +110,9 @@ pub struct LocalVar {
     pub col: usize,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct FunctionSignature {
     pub name: String,
-    pub return_type: String,
     pub label: String,
     pub parameters: Vec<String>,
     pub parsed_params: Vec<FunctionParam>,
@@ -545,7 +507,6 @@ pub fn scan_user_functions(
                 let doc = if pending_doc.is_empty() { None } else { Some(pending_doc.join(" ")) };
                 results.push(FunctionSignature {
                     name: fn_name,
-                    return_type: ret_type,
                     label: header.to_string(),
                     parameters: params,
                     parsed_params,
@@ -643,7 +604,6 @@ pub fn scan_user_functions(
 
                             results.push(FunctionSignature {
                                 name: fn_name.to_string(),
-                                return_type: return_type.to_string(),
                                 label: header.to_string(),
                                 parameters: params,
                                 parsed_params,
@@ -1508,12 +1468,6 @@ pub fn scan_shaderlab_properties(text: &str) -> Vec<ShaderLabProperty> {
     }
 
     properties
-}
-
-/// Parses all structs and cbuffers and their member fields from HLSL source code.
-#[allow(dead_code)]
-pub fn scan_struct_definitions(text: &str) -> Vec<StructDef> {
-    scan_struct_definitions_with_uri(text, None)
 }
 
 pub fn scan_struct_definitions_with_uri(text: &str, file_uri: Option<&str>) -> Vec<StructDef> {

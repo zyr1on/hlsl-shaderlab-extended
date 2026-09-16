@@ -2,58 +2,28 @@
 
 High-performance, zero-bloat language extension and LSP for **HLSL**, **Unity ShaderLab**, and **Unreal Engine Shaders** in the [Zed code editor](https://zed.dev).
 
-Powered by **Microsoft DirectX Shader Compiler (`dxc`)** and a standalone, ultra-lightweight Rust LSP server (`hlsl_validator`).
+Powered by a lightweight Rust LSP server (`hlsl_validator`) and the **Microsoft DirectX Shader Compiler (`dxc`)**.
 
 ---
 
 ## Features
 
-### Ultra-Lightweight & Blazing Fast
-- **Zero-Bloat Architecture:** Complete LSP server compiles down to a native binary with **< 2 MB RAM** usage and **0% idle CPU**.
-- **No Zombies, No Leaks:** Safe process spawning and strict temporary file lifecycle management.
-- **120ms Debounced Diagnostics:** Real-time compiler feedback without UI freezes or resource hogs while typing.
-
-### Microsoft DXC Diagnostics
-- **Pure HLSL (`.hlsl`, `.hlsli`, `.fx`, `.usf`, `.ush`):** Full syntax and semantic type checking compiled against modern DirectX Shader Model 6.3+ via Microsoft DXC.
-- **Unity ShaderLab (`.shader`, `.cginc`):** Automatically extracts and compiles `HLSLPROGRAM...ENDHLSL` and `CGPROGRAM...ENDCG` blocks with exact line-number translation.
-- **Automatic Project Include Resolution (`-I`):**
-  - **Unity Projects:** Automatically detects `Assets/`, `Packages/`, and `Library/PackageCache/`.
-  - **Unreal Projects:** Automatically detects `Shaders/` and project roots.
-  - **Local Folders:** Automatically includes the shader's parent directory.
-
-### Smart Autocomplete & Swizzling
-- **Struct Member Access:** Typing `output.` or `output.po` inspects the variable's type and proposes its struct fields (`position`, `color`, etc.).
-- **Vector Swizzling:** Typing `output.position.` proposes vector swizzle components (`.xy`, `.xyz`, `.xyzw`, `.rgba`).
-- **Texture & Buffer Methods:** Automatic completion for `.Sample()`, `.SampleLevel()`, `.SampleBias()`, `.Load()`, `.GetDimensions()`.
-- **System-Value Semantics:** Typing `:` proposes HLSL semantics (`SV_Position`, `SV_Target`, `POSITION`, `TEXCOORD0`, etc.).
-- **ShaderLab Contextual Autocomplete:**
-  - Property types: `Color`, `Vector`, `Float`, `Int`, `Range(0, 1)`, `2D`, `Cube`, `3D`.
-  - Render states: `Cull` (`Back`, `Front`, `Off`), `ZWrite` (`On`, `Off`), `ZTest` (`LEqual`, `Always`, `Equal`, etc.), `Blend` (`SrcAlpha OneMinusSrcAlpha`, `One One`, `Off`).
-  - Unity Tags: `"RenderType"="Opaque"`, `"Queue"="Geometry"`, `"RenderPipeline"="UniversalPipeline"`, `"LightMode"="UniversalForward"`.
-
-### 198+ Built-in Functions & Signature Help
-- Exhaustive documentation and signatures for:
-  - **Microsoft HLSL Intrinsics:** Math, trigonometry, wave intrinsics (`WaveActiveMin`, `WaveReadLaneFirst`), derivatives (`ddx_fine`, `fwidth_coarse`), bitwise operations (`ubfe`, `ibfe`, `msad4`), barriers, and `Interlocked` atomics.
-  - **Unity URP / HDRP / Built-in:** `TransformObjectToHClip`, `TRANSFORM_TEX`, `ComputeScreenPos`, `SAMPLE_TEXTURE2D_LOD`, `LightingPhysicallyBased`, `UniversalFragmentPBR`, `LinearEyeDepth`.
-  - **Unreal Engine:** `GetWorldPosition`, `GetWorldNormal`, `RotateAboutAxis`, `AntialiasedTextureMask`, `UnitVectorToOctahedron`, `Luminance`, `RGBToHSV`.
-- Active parameter highlighting as you type inside function parentheses: `lerp(a, |)`.
-
-### Document Symbols (Outline & Breadcrumbs)
-- Full support for `textDocument/documentSymbol`.
-- Structs, constant buffers (`cbuffer`), functions, and ShaderLab `SubShader`/`Pass` blocks appear directly in Zed's **Outline** panel and editor **Breadcrumbs**.
-
-### Fast Document Formatting
-- Format shaders on demand (`Shift+Alt+F`) or on save (`format_on_save`).
-- Aligns braces `{ }`, indents nested blocks cleanly, preserves preprocessor directives (`#pragma`, `#include`) at column 0, and trims trailing whitespace.
-
-### Go to Definition & Hover Docs
-- Press `F12` on any user function, struct, or variable to jump directly to its declaration.
-- Press `F12` on `#include "MyLibrary.hlsl"` lines to jump straight to the included file.
-- Hover over any intrinsic, type, keyword, or user variable for rich markdown documentation.
+- **Compiler Diagnostics (Microsoft DXC):** Real-time syntax and type checking against DirectX Shader Model 6.3+ (HLSL 2021) with 120ms debounced execution.
+- **Unity ShaderLab Support:** Automatic extraction and validation of embedded `HLSLPROGRAM`/`CGPROGRAM` blocks with precise line mapping.
+- **Smart Autocomplete:**
+  - Struct fields and nested member access (`output.`)
+  - Vector swizzling components (`.xy`, `.xyz`, `.xyzw`, `.rgba`)
+  - Texture and buffer methods (`.Sample()`, `.Load()`, `.GetDimensions()`)
+  - System-value semantics (`SV_Position`, `SV_Target`, `TEXCOORD`)
+  - ShaderLab properties, render states (`Cull`, `ZWrite`, `Blend`), and tags
+- **Intrinsics & Engine Documentation:** 198+ HLSL intrinsics, Unity (URP/HDRP/Built-in) helpers, and Unreal Engine shader functions with full signature help and hover docs.
+- **Document Symbols & Breadcrumbs:** Instant outline for functions, structs, cbuffers, and SubShader passes.
+- **Code Formatting:** Clean indentation, bracket alignment, and preprocessor formatting via `format_on_save`.
+- **Go to Definition:** Jump directly to user functions, structs, variables, or `#include` files with `F12`.
 
 ---
 
-## Supported Languages & File Extensions
+## Supported Languages & Extensions
 
 | Language | File Extensions |
 | :--- | :--- |
@@ -62,17 +32,28 @@ Powered by **Microsoft DirectX Shader Compiler (`dxc`)** and a standalone, ultra
 
 ---
 
-## Automatic Setup & Zero Configuration
+## Platform Support
 
-The extension automatically manages its dependencies:
-1. **`hlsl_validator`**: Automatically downloaded from GitHub Releases on first run if not found in your system `PATH`.
-2. **Microsoft DXC**: Automatically downloaded from Microsoft's official releases on Windows and Linux if not already detected on your system.
+| Platform | Diagnostics (DXC) | Autocomplete, Hover, Symbols, Formatting |
+| :--- | :--- | :--- |
+| **Windows (x86_64 / ARM64)** | Supported (Auto-downloaded or system `PATH`) | Supported |
+| **Linux (x86_64)** | Supported (Auto-downloaded or system `PATH`) | Supported |
+| **macOS (Apple Silicon / Intel)** | **Not Supported** | Supported |
+
+### Why is DXC Diagnostics Not Supported on macOS?
+Microsoft DirectXShaderCompiler (`dxc`) relies on DirectX and Windows/Linux LLVM backends. Microsoft does not distribute official precompiled DXC binaries for macOS. All non-compiler language features (autocomplete, hover, document outline, signature help, formatting, syntax highlighting) work fully across all platforms including macOS.
 
 ---
 
-## Optional Configuration (`settings.json`)
+## Setup & Configuration
 
-If you prefer to use custom binary locations or customize editor behavior, add the following to your Zed `settings.json`:
+### Automatic Installation
+The extension automatically handles its dependencies:
+1. **`hlsl_validator`**: Automatically downloaded from GitHub Releases on first launch if not found in `PATH`.
+2. **Microsoft DXC**: Automatically downloaded from Microsoft's official releases on Windows and Linux if not found in `PATH`.
+
+### Custom Configuration (`settings.json`)
+You can specify custom binary paths or formatting preferences in your Zed settings:
 
 ```json
 {
@@ -93,6 +74,16 @@ If you prefer to use custom binary locations or customize editor behavior, add t
   }
 }
 ```
+
+---
+
+## Performance & Architecture
+
+- **LSP Binary Size:** ~985 KB native binary.
+- **WASM Extension:** ~166 KB compiled for `wasm32-wasip1`.
+- **Memory Footprint:** < 2 MB RAM usage.
+- **Idle CPU:** 0.0% CPU usage with non-polling event loop.
+- **Speed:** DXC runs with `-O0` to bypass codegen optimization passes for instant diagnostic feedback.
 
 ---
 
