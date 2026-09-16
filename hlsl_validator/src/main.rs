@@ -401,6 +401,21 @@ fn urlencoding_decode(s: &str) -> String {
     out
 }
 
+pub fn normalize_uri(uri: &str) -> String {
+    if let Some(p) = uri_to_path(uri) {
+        #[cfg(windows)]
+        {
+            format!("file:///{}", p.to_string_lossy().replace('\\', "/").to_lowercase())
+        }
+        #[cfg(not(windows))]
+        {
+            format!("file://{}", p.to_string_lossy())
+        }
+    } else {
+        uri.to_lowercase()
+    }
+}
+
 pub fn find_dxc_path() -> String {
     if let Ok(p) = env::var("DXC_PATH") {
         let trimmed = p.trim();
@@ -1665,10 +1680,12 @@ pub fn run_dxc_on_text(
     let combined = format!("{stderr}\n{stdout}");
 
     for line in combined.lines() {
-        let (severity, rest) = if let Some(idx) = line.find(": error:") {
-            (1, line[idx + 8..].trim())
+        let (severity, rest, tag) = if let Some(idx) = line.find(": fatal error:") {
+            (1, line[idx + 14..].trim(), ": fatal error:")
+        } else if let Some(idx) = line.find(": error:") {
+            (1, line[idx + 8..].trim(), ": error:")
         } else if let Some(idx) = line.find(": warning:") {
-            (2, line[idx + 10..].trim())
+            (2, line[idx + 10..].trim(), ": warning:")
         } else {
             continue;
         };
@@ -1697,10 +1714,11 @@ pub fn run_dxc_on_text(
             }
         }
 
-        let prefix_part = line.split(": error:").next().or_else(|| line.split(": warning:").next()).unwrap_or("");
+        let prefix_part = line.split(tag).next().unwrap_or("");
         let mut parts = prefix_part.rsplitn(3, ':');
         let col_str = parts.next().unwrap_or("");
         let line_str = parts.next().unwrap_or("");
+        let file_part = parts.next().unwrap_or("");
 
         if let (Ok(parsed_line), Ok(parsed_col)) = (line_str.parse::<usize>(), col_str.parse::<usize>()) {
             if parsed_line <= preamble_line_count {
@@ -1708,13 +1726,26 @@ pub fn run_dxc_on_text(
                 continue;
             }
 
-            let actual_line = (parsed_line - 1).saturating_sub(preamble_line_count) + line_offset;
+            let actual_line = if file_part.contains("hlsl_val_") {
+                (parsed_line - 1).saturating_sub(preamble_line_count) + line_offset
+            } else {
+                let inc_name = Path::new(file_part).file_name().and_then(|n| n.to_str()).unwrap_or("");
+                content.lines().enumerate()
+                    .find(|(_, l)| l.contains("#include") && !inc_name.is_empty() && l.contains(inc_name))
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(line_offset)
+            };
             let actual_col = parsed_col.saturating_sub(1);
+            let span_len = if let Some(missing_file) = rest.strip_prefix('\'').and_then(|s| s.split('\'').next()) {
+                missing_file.len() + 2
+            } else {
+                5
+            };
 
             diagnostics.push(Diagnostic {
                 range: Range {
                     start: Position { line: actual_line, character: actual_col },
-                    end: Position { line: actual_line, character: actual_col + 5 },
+                    end: Position { line: actual_line, character: actual_col + span_len },
                 },
                 severity,
                 message: rest.to_string(),
@@ -1796,13 +1827,13 @@ pub fn format_document(text: &str, tab_size: usize, insert_spaces: bool) -> Vec<
     })]
 }
 
-fn get_document_from_cache<'a>(doc_cache: &'a HashMap<String, String>, uri: &str) -> Option<&'a str> {
+pub fn get_document_from_cache<'a>(doc_cache: &'a HashMap<String, String>, uri: &str) -> Option<&'a str> {
     if let Some(d) = doc_cache.get(uri) {
         return Some(d.as_str());
     }
-    let uri_lower = uri.to_lowercase();
+    let norm = normalize_uri(uri);
     for (k, v) in doc_cache {
-        if k.to_lowercase() == uri_lower {
+        if normalize_uri(k) == norm {
             return Some(v.as_str());
         }
     }

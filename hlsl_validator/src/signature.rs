@@ -225,6 +225,9 @@ pub fn find_enclosing_call(text: &str, line_idx: usize, col_idx: usize) -> Optio
     }
 
     let bytes = text.as_bytes();
+    if offset < bytes.len() && bytes[offset] == b'(' {
+        offset += 1;
+    }
     let mut depth = 0;
     let mut bracket_depth = 0;
     let mut brace_depth = 0;
@@ -997,6 +1000,7 @@ pub fn get_signature_help(
     doc_cache: &HashMap<String, String>,
 ) -> Value {
     let call_info = find_enclosing_call(doc_content, line_idx, col_idx)
+        .or_else(|| find_enclosing_call(doc_content, line_idx, col_idx + 1))
         .or_else(|| {
             if col_idx > 0 {
                 find_enclosing_call(doc_content, line_idx, col_idx - 1)
@@ -1031,11 +1035,20 @@ pub fn get_signature_help(
 
     let (user_funcs, _, _) = resolve_includes_and_scan_symbols(uri, doc_content, doc_cache);
     let builtin_doc = docs::find_builtin_function(&fn_name);
+    let norm_uri = crate::normalize_uri(uri);
 
     // 1. Current Active Document Functions (User's Code - Highest Priority!)
     let current_file_matches: Vec<&FunctionSignature> = user_funcs
         .iter()
-        .filter(|f| f.name == fn_name && (f.source.is_none() || f.file_uri.as_deref() == Some(uri)))
+        .filter(|f| {
+            f.name == fn_name
+                && (f.source.is_none()
+                    || f.file_uri
+                        .as_deref()
+                        .map(crate::normalize_uri)
+                        .as_deref()
+                        == Some(&norm_uri))
+        })
         .collect();
 
     if !current_file_matches.is_empty() {
@@ -1077,7 +1090,15 @@ pub fn get_signature_help(
     // 2. Included Header Functions (From #include files, enriched with rich docs if available!)
     let include_matches: Vec<&FunctionSignature> = user_funcs
         .iter()
-        .filter(|f| f.name == fn_name && f.source.is_some() && f.file_uri.as_deref() != Some(uri))
+        .filter(|f| {
+            f.name == fn_name
+                && f.source.is_some()
+                && f.file_uri
+                    .as_deref()
+                    .map(crate::normalize_uri)
+                    .as_deref()
+                    != Some(&norm_uri)
+        })
         .collect();
 
     if !include_matches.is_empty() {
@@ -1302,8 +1323,8 @@ pub fn handle_definition(msg: &Value, doc_cache: &HashMap<String, String>) -> Va
     let col_idx = params["position"]["character"].as_u64().unwrap_or(0) as usize;
 
     let owned_doc;
-    let doc = match doc_cache.get(uri) {
-        Some(d) => d.as_str(),
+    let doc = match crate::get_document_from_cache(doc_cache, uri) {
+        Some(d) => d,
         None => {
             if let Some(p) = uri_to_path(uri) {
                 if let Ok(content) = std::fs::read_to_string(p) {
