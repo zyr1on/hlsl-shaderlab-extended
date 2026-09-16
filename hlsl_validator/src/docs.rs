@@ -2680,4 +2680,50 @@ pub static ENGINE_VARIABLES: &[EngineVariable] = &[
         detail: "float CalcPixelDepth(FMaterialPixelParameters Parameters)",
         description: "### `CalcPixelDepth`\n*Unreal Engine Material Function*\n\nCalculates camera-to-pixel depth in Unreal Units.",
     },
+
+    // ========================================================================
+    // Unity: URP / HDRP Constant Buffer Blocks (SRP Batcher)
+    // ========================================================================
+    EngineVariable {
+        name: "UnityPerMaterial",
+        var_type: "cbuffer",
+        engine: "unity",
+        detail: "CBUFFER_START(UnityPerMaterial)",
+        description: "### `UnityPerMaterial`\n*Unity URP/HDRP Constant Buffer*\n\nContains all material properties exposed in the Inspector. Required by the SRP Batcher to persist material data across draw calls and achieve maximum performance.",
+    },
+    EngineVariable {
+        name: "UnityPerDraw",
+        var_type: "cbuffer",
+        engine: "unity",
+        detail: "CBUFFER_START(UnityPerDraw)",
+        description: "### `UnityPerDraw`\n*Unity Built-in Constant Buffer*\n\nContains per-object transformation matrices (`unity_ObjectToWorld`, `unity_WorldToObject`) and GPU instancing properties.",
+    },
+    EngineVariable {
+        name: "UnityPerCamera",
+        var_type: "cbuffer",
+        engine: "unity",
+        detail: "CBUFFER_START(UnityPerCamera)",
+        description: "### `UnityPerCamera`\n*Unity Built-in Constant Buffer*\n\nContains camera-specific projection, view matrices, and camera world position parameters.",
+    },
+    EngineVariable {
+        name: "UnityPerFrame",
+        var_type: "cbuffer",
+        engine: "unity",
+        detail: "CBUFFER_START(UnityPerFrame)",
+        description: "### `UnityPerFrame`\n*Unity Built-in Constant Buffer*\n\nContains global per-frame time parameters (`_Time`, `_SinTime`, `_CosTime`, `unity_DeltaTime`).",
+    },
+    EngineVariable {
+        name: "UnityPerPass",
+        var_type: "cbuffer",
+        engine: "unity",
+        detail: "CBUFFER_START(UnityPerPass)",
+        description: "### `UnityPerPass`\n*Unity Built-in Constant Buffer*\n\nContains per-pass parameters such as shadow cascade parameters, light count, and ambient lighting.",
+    },
+    EngineVariable {
+        name: "UnityPerDrawRare",
+        var_type: "cbuffer",
+        engine: "unity",
+        detail: "CBUFFER_START(UnityPerDrawRare)",
+        description: "### `UnityPerDrawRare`\n*Unity Built-in Constant Buffer*\n\nContains rarely updated draw call state parameters.",
+    },
 ];

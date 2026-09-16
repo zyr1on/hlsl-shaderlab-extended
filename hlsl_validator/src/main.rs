@@ -2214,41 +2214,47 @@ fn handle_completion(
             let line_before_cursor = prefix;
             let line_after_cursor = &line[safe_col..];
             if let Some(eq_idx) = line_before_cursor.rfind('=') {
-                let before_eq = line_before_cursor[..eq_idx].trim();
-                let key = before_eq.rsplit('"').nth(1)
-                    .or_else(|| before_eq.split_whitespace().last())
-                    .unwrap_or(before_eq)
-                    .trim_start_matches('{')
-                    .trim();
-                let after_eq = line_before_cursor[eq_idx + 1..].trim_start();
-                let already_has_quote = after_eq.starts_with('"');
-                let closing_quote_present = line_after_cursor.trim_start().starts_with('"');
+                let after_eq = &line_before_cursor[eq_idx + 1..];
+                let quotes_after_eq = after_eq.chars().filter(|&c| c == '"').count();
+                // If there are fewer than 2 quotes after '=', cursor is still inside the tag value
+                if quotes_after_eq < 2 {
+                    let before_eq = line_before_cursor[..eq_idx].trim();
+                    let key = before_eq.rsplit('"').nth(1)
+                        .or_else(|| before_eq.split_whitespace().last())
+                        .unwrap_or(before_eq)
+                        .trim_start_matches('{')
+                        .trim();
+                    let after_eq_trimmed = after_eq.trim_start();
+                    let already_has_quote = after_eq_trimmed.starts_with('"');
+                    let closing_quote_present = line_after_cursor.trim_start().starts_with('"');
 
-                for (tag_key, values, desc) in docs::SHADERLAB_TAG_KEYS_AND_VALUES {
-                    if *tag_key == key {
-                        for (v_idx, val) in values.iter().enumerate() {
-                            let clean_val = val.trim_matches('"');
-                            let insert = if already_has_quote && closing_quote_present {
-                                clean_val.to_string()
-                            } else if already_has_quote {
-                                format!("{}\"", clean_val)
-                            } else {
-                                (*val).to_string()
-                            };
-                            sl_items.push(json!({
-                                "label": *val,
-                                "kind": 12,
-                                "detail": format!("{}: {}", tag_key, desc),
-                                "insertText": insert,
-                                "sortText": format!("00_{:02}_{}", v_idx, clean_val),
-                            }));
+                    for (tag_key, values, desc) in docs::SHADERLAB_TAG_KEYS_AND_VALUES {
+                        if *tag_key == key {
+                            for (v_idx, val) in values.iter().enumerate() {
+                                let clean_val = val.trim_matches('"');
+                                let insert = if already_has_quote && closing_quote_present {
+                                    clean_val.to_string()
+                                } else if already_has_quote {
+                                    format!("{}\"", clean_val)
+                                } else {
+                                    (*val).to_string()
+                                };
+                                sl_items.push(json!({
+                                    "label": *val,
+                                    "kind": 12,
+                                    "detail": format!("{}: {}", tag_key, desc),
+                                    "insertText": insert,
+                                    "filterText": clean_val,
+                                    "sortText": format!("00_{:02}_{}", v_idx, clean_val),
+                                }));
+                            }
+                            return json!(sl_items);
                         }
-                        return json!(sl_items);
                     }
                 }
             }
 
-            // Inside Tags block (before '='): suggest tag keys with value templates
+            // Inside Tags block (before '=' or after a completed tag): suggest tag keys with value templates
             let quote_before_key = prefix.trim_end().ends_with('"');
             for (idx, (tag_key, values, desc)) in docs::SHADERLAB_TAG_KEYS_AND_VALUES.iter().enumerate() {
                 let default_val = values.first().map(|v| v.trim_matches('"')).unwrap_or("Opaque");
@@ -2258,11 +2264,12 @@ fn handle_completion(
                     format!("\"{}\" = \"${{1:{}}}\"", tag_key, default_val)
                 };
                 sl_items.push(json!({
-                    "label": *tag_key,
+                    "label": format!("\"{}\"", tag_key),
                     "kind": 10,
                     "detail": format!("Tag: {}", desc),
                     "insertText": snippet,
                     "insertTextFormat": 2,
+                    "filterText": *tag_key,
                     "sortText": format!("01_{:02}_{}", idx, tag_key),
                 }));
             }
@@ -2875,6 +2882,9 @@ fn handle_completion(
         ("kernel", "Compute Shader kernel", "[numthreads(${1:8}, ${2:8}, ${3:1})]\nvoid ${4:CSMain}(uint3 id : SV_DispatchThreadID)\n{\n    $0\n}"),
         ("struct", "Struct declaration", "struct $1\n{\n    $0\n};"),
         ("cbuffer", "Constant Buffer with register", "cbuffer $1 : register(b${2:0})\n{\n    $0\n};"),
+        ("cbuffer_unity_per_material", "CBUFFER_START(UnityPerMaterial) block", "CBUFFER_START(UnityPerMaterial)\n    $0\nCBUFFER_END"),
+        ("cbuffer_unity_per_draw", "CBUFFER_START(UnityPerDraw) block", "CBUFFER_START(UnityPerDraw)\n    $0\nCBUFFER_END"),
+        ("cbuffer_unity_per_camera", "CBUFFER_START(UnityPerCamera) block", "CBUFFER_START(UnityPerCamera)\n    $0\nCBUFFER_END"),
         ("tex2d", "Texture2D and SamplerState pair", "Texture2D $1 : register(t${2:0});\nSamplerState sampler_$1 : register(s${2:0});"),
         ("for", "For loop", "for (int ${1:i} = 0; ${1:i} < ${2:count}; ++${1:i})\n{\n    $0\n}"),
         ("while", "While loop", "while ($1)\n{\n    $0\n}"),

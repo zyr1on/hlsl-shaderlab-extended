@@ -557,6 +557,57 @@ pub fn scan_user_functions(
             }
         }
 
+        // Support function-like macros: #define MACRO_NAME(a, b) ...
+        if !in_func_body && line.starts_with("#define") {
+            if let Some(rest) = line.strip_prefix("#define") {
+                let trimmed = rest.trim();
+                if let Some(open_paren) = trimmed.find('(') {
+                    let name_part = trimmed[..open_paren].trim();
+                    if is_valid_identifier(name_part) && !INVALID_NAMES.contains(&name_part) {
+                        if let Some(close_paren) = trimmed.find(')') {
+                            let params_raw = &trimmed[open_paren + 1..close_paren];
+                            let params: Vec<String> = params_raw
+                                .split(',')
+                                .map(|p| p.trim().to_string())
+                                .filter(|p| !p.is_empty())
+                                .collect();
+                            let header = format!("{}({})", name_part, params.join(", "));
+                            let mut parsed_params = Vec::new();
+                            for p in &params {
+                                parsed_params.push(FunctionParam {
+                                    name: p.clone(),
+                                    param_type: "var".to_string(),
+                                    line: line_idx,
+                                    col: 0,
+                                });
+                            }
+                            let doc = if pending_doc.is_empty() {
+                                None
+                            } else {
+                                Some(pending_doc.join(" "))
+                            };
+                            results.push(FunctionSignature {
+                                name: name_part.to_string(),
+                                label: header,
+                                parameters: params,
+                                parsed_params,
+                                local_vars: Vec::new(),
+                                body_start_line: line_idx,
+                                body_end_line: line_idx,
+                                doc,
+                                source: source_name.map(|s| s.to_string()),
+                                line: line_idx,
+                                col: raw_line.find(name_part).unwrap_or(0),
+                                file_uri: file_uri.map(|s| s.to_string()),
+                            });
+                            pending_doc.clear();
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
         if !in_func_body && !line.starts_with("return") && !line.starts_with('#') {
             let mut decl_line = line;
             while decl_line.starts_with('[') {
@@ -992,7 +1043,13 @@ pub fn get_signature_help(
             .iter()
             .map(|f| {
                 let params: Vec<Value> = f.parameters.iter().map(|p| json!({ "label": p })).collect();
-                let doc_val = f.doc.as_deref().unwrap_or("");
+                let doc_val = if let Some(ref d) = f.doc {
+                    d.clone()
+                } else if let Some(bi) = builtin_doc {
+                    bi.description.to_string()
+                } else {
+                    format!("```hlsl\n{}\n```\n*(User-defined function)*", f.label)
+                };
                 json!({
                     "label": f.label,
                     "parameters": params,
@@ -1004,10 +1061,16 @@ pub fn get_signature_help(
             })
             .collect();
 
+        let active_p = if !current_file_matches[0].parameters.is_empty() {
+            active_param.min(current_file_matches[0].parameters.len() - 1)
+        } else {
+            0
+        };
+
         return json!({
             "signatures": signatures,
             "activeSignature": 0,
-            "activeParameter": active_param
+            "activeParameter": active_p
         });
     }
 
@@ -1028,7 +1091,7 @@ pub fn get_signature_help(
                 } else if let Some(bi) = builtin_doc {
                     format!("{}{}", src_info, bi.description)
                 } else {
-                    src_info
+                    format!("```hlsl\n{}\n```\n{}", f.label, src_info)
                 };
 
                 json!({
@@ -1042,10 +1105,16 @@ pub fn get_signature_help(
             })
             .collect();
 
+        let active_p = if !include_matches[0].parameters.is_empty() {
+            active_param.min(include_matches[0].parameters.len() - 1)
+        } else {
+            0
+        };
+
         return json!({
             "signatures": signatures,
             "activeSignature": 0,
-            "activeParameter": active_param
+            "activeParameter": active_p
         });
     }
 
@@ -1067,10 +1136,16 @@ pub fn get_signature_help(
             })
             .collect();
 
+        let active_p = if !builtin.overloads.is_empty() && !builtin.overloads[0].params.is_empty() {
+            active_param.min(builtin.overloads[0].params.len() - 1)
+        } else {
+            0
+        };
+
         return json!({
             "signatures": signatures,
             "activeSignature": 0,
-            "activeParameter": active_param
+            "activeParameter": active_p
         });
     }
 
