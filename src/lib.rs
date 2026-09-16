@@ -63,6 +63,42 @@ fn find_file_recursive(dir: &Path, target_name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Helper to locate DXC executable inside extracted release folder.
+fn locate_dxc(version_dir: &str, is_windows: bool, arch: zed::Architecture) -> Option<String> {
+    let dir_path = Path::new(version_dir);
+    if is_windows {
+        let arch_folder = match arch {
+            zed::Architecture::Aarch64 => "arm64",
+            zed::Architecture::X86 => "x86",
+            _ => "x64",
+        };
+        let preferred = format!("{version_dir}/bin/{arch_folder}/dxc.exe");
+        if fs::metadata(&preferred).is_ok_and(|s| s.is_file()) {
+            return Some(preferred);
+        }
+        find_file_recursive(dir_path, "dxc.exe").map(|p| p.to_string_lossy().to_string())
+    } else {
+        let preferred = format!("{version_dir}/bin/dxc");
+        if fs::metadata(&preferred).is_ok_and(|s| s.is_file()) {
+            return Some(preferred);
+        }
+        find_file_recursive(dir_path, "dxc").map(|p| p.to_string_lossy().to_string())
+    }
+}
+
+/// Helper to locate hlsl_validator executable inside extracted release folder.
+fn locate_validator(version_dir: &str, binary_name: &str) -> Option<String> {
+    let root = format!("{version_dir}/{binary_name}");
+    if fs::metadata(&root).is_ok_and(|s| s.is_file()) {
+        return Some(root);
+    }
+    let bin = format!("{version_dir}/bin/{binary_name}");
+    if fs::metadata(&bin).is_ok_and(|s| s.is_file()) {
+        return Some(bin);
+    }
+    find_file_recursive(Path::new(version_dir), binary_name).map(|p| p.to_string_lossy().to_string())
+}
+
 struct HlslShaderlabExtension {
     cached_dxc: Option<String>,
     cached_hlsl_validator: Option<String>,
@@ -152,76 +188,26 @@ impl HlslShaderlabExtension {
             })?;
 
         let version_dir = format!("dxc-{}", release.version);
-        let binary_target_name = if is_windows { "dxc.exe" } else { "dxc" };
 
-        let dir_path = Path::new(&version_dir);
-        let resolved_path = if is_windows {
-            let arch_folder = match arch {
-                zed::Architecture::Aarch64 => "arm64",
-                zed::Architecture::X86 => "x86",
-                _ => "x64",
-            };
-            let preferred = format!("{version_dir}/bin/{arch_folder}/dxc.exe");
-            if fs::metadata(&preferred).is_ok_and(|s| s.is_file()) {
-                Some(preferred)
-            } else {
-                find_file_recursive(dir_path, binary_target_name)
-                    .map(|p| p.to_string_lossy().to_string())
-            }
+        let binary_path = if let Some(path) = locate_dxc(&version_dir, is_windows, arch) {
+            path
         } else {
-            let preferred = format!("{version_dir}/bin/dxc");
-            if fs::metadata(&preferred).is_ok_and(|s| s.is_file()) {
-                Some(preferred)
+            zed::set_language_server_installation_status(
+                language_server_id,
+                &zed::LanguageServerInstallationStatus::Downloading,
+            );
+
+            let file_type = if is_windows {
+                zed::DownloadedFileType::Zip
             } else {
-                find_file_recursive(dir_path, binary_target_name)
-                    .map(|p| p.to_string_lossy().to_string())
-            }
-        };
+                zed::DownloadedFileType::GzipTar
+            };
 
-        let binary_path = match resolved_path {
-            Some(path) => path,
-            None => {
-                zed::set_language_server_installation_status(
-                    language_server_id,
-                    &zed::LanguageServerInstallationStatus::Downloading,
-                );
+            zed::download_file(&asset.download_url, &version_dir, file_type)
+                .map_err(|e| format!("Failed to download DXC from microsoft/DirectXShaderCompiler: {e}"))?;
 
-                let file_type = if is_windows {
-                    zed::DownloadedFileType::Zip
-                } else {
-                    zed::DownloadedFileType::GzipTar
-                };
-
-                zed::download_file(&asset.download_url, &version_dir, file_type)
-                    .map_err(|e| format!("Failed to download DXC from microsoft/DirectXShaderCompiler: {e}"))?;
-
-                let found = if is_windows {
-                    let arch_folder = match arch {
-                        zed::Architecture::Aarch64 => "arm64",
-                        zed::Architecture::X86 => "x86",
-                        _ => "x64",
-                    };
-                    let preferred = format!("{version_dir}/bin/{arch_folder}/dxc.exe");
-                    if fs::metadata(&preferred).is_ok_and(|s| s.is_file()) {
-                        Some(preferred)
-                    } else {
-                        find_file_recursive(dir_path, binary_target_name)
-                            .map(|p| p.to_string_lossy().to_string())
-                    }
-                } else {
-                    let preferred = format!("{version_dir}/bin/dxc");
-                    if fs::metadata(&preferred).is_ok_and(|s| s.is_file()) {
-                        Some(preferred)
-                    } else {
-                        find_file_recursive(dir_path, binary_target_name)
-                            .map(|p| p.to_string_lossy().to_string())
-                    }
-                };
-
-                found.ok_or_else(|| {
-                    format!("DXC executable '{binary_target_name}' not found in '{version_dir}'")
-                })?
-            }
+            locate_dxc(&version_dir, is_windows, arch)
+                .ok_or_else(|| format!("DXC executable not found in '{version_dir}'"))?
         };
 
         let _ = zed::make_file_executable(&binary_path);
@@ -344,44 +330,20 @@ impl HlslShaderlabExtension {
             })
         {
             let version_dir = format!("hlsl_validator-{}", release.version);
-            let dir_path = Path::new(&version_dir);
 
-                let candidate_root = format!("{version_dir}/{binary_name}");
-                let candidate_bin = format!("{version_dir}/bin/{binary_name}");
+            let binary_path = if let Some(path) = locate_validator(&version_dir, &binary_name) {
+                path
+            } else {
+                zed::set_language_server_installation_status(
+                    language_server_id,
+                    &zed::LanguageServerInstallationStatus::Downloading,
+                );
+                zed::download_file(&asset.download_url, &version_dir, file_type)
+                    .map_err(|e| format!("Failed to download hlsl_validator from zyr1on/zed-hlsl_shaderlab-extended: {e}"))?;
 
-                let existing_path = if fs::metadata(&candidate_root).is_ok_and(|s| s.is_file()) {
-                    Some(candidate_root.clone())
-                } else if fs::metadata(&candidate_bin).is_ok_and(|s| s.is_file()) {
-                    Some(candidate_bin.clone())
-                } else if dir_path.exists() {
-                    find_file_recursive(dir_path, &binary_name)
-                        .map(|p| p.to_string_lossy().to_string())
-                } else {
-                    None
-                };
-
-                let binary_path = match existing_path {
-                    Some(path) => path,
-                    None => {
-                        zed::set_language_server_installation_status(
-                            language_server_id,
-                            &zed::LanguageServerInstallationStatus::Downloading,
-                        );
-                        let _ = zed::download_file(&asset.download_url, &version_dir, file_type);
-
-                        if fs::metadata(&candidate_root).is_ok_and(|s| s.is_file()) {
-                            Some(candidate_root)
-                        } else if fs::metadata(&candidate_bin).is_ok_and(|s| s.is_file()) {
-                            Some(candidate_bin)
-                        } else {
-                            find_file_recursive(dir_path, &binary_name)
-                                .map(|p| p.to_string_lossy().to_string())
-                        }
-                        .ok_or_else(|| {
-                            format!("hlsl_validator binary not found in '{version_dir}'")
-                        })?
-                    }
-                };
+                locate_validator(&version_dir, &binary_name)
+                    .ok_or_else(|| format!("hlsl_validator binary not found in '{version_dir}'"))?
+            };
 
                 let _ = zed::make_file_executable(&binary_path);
                 zed::set_language_server_installation_status(
