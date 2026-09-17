@@ -430,10 +430,13 @@ pub fn normalize_uri(uri: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(target_arch = "aarch64")]
 const TARGET_DXC_ARCH: &str = "arm64";
+#[allow(dead_code)]
 #[cfg(target_arch = "x86")]
 const TARGET_DXC_ARCH: &str = "x86";
+#[allow(dead_code)]
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86")))]
 const TARGET_DXC_ARCH: &str = "x64";
 
@@ -441,6 +444,75 @@ const TARGET_DXC_ARCH: &str = "x64";
 const DXC_BINARY_NAME: &str = "dxc.exe";
 #[cfg(not(windows))]
 const DXC_BINARY_NAME: &str = "dxc";
+
+/// Returns platform-specific Zed extension work directories (Windows, Linux/Ubuntu, macOS).
+fn get_zed_extension_work_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    #[cfg(windows)]
+    if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+        dirs.push(
+            PathBuf::from(local_app_data)
+                .join("Zed")
+                .join("extensions")
+                .join("work")
+                .join("hlsl-shaderlab-extended"),
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = env::var("HOME") {
+        dirs.push(
+            PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("Zed")
+                .join("extensions")
+                .join("work")
+                .join("hlsl-shaderlab-extended"),
+        );
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // 1. $XDG_DATA_HOME/zed/extensions/work/hlsl-shaderlab-extended
+        if let Ok(xdg) = env::var("XDG_DATA_HOME") {
+            dirs.push(
+                PathBuf::from(xdg)
+                    .join("zed")
+                    .join("extensions")
+                    .join("work")
+                    .join("hlsl-shaderlab-extended"),
+            );
+        }
+        if let Ok(home) = env::var("HOME") {
+            // 2. Standard Ubuntu / Linux XDG fallback: ~/.local/share/zed/extensions/work/hlsl-shaderlab-extended
+            dirs.push(
+                PathBuf::from(&home)
+                    .join(".local")
+                    .join("share")
+                    .join("zed")
+                    .join("extensions")
+                    .join("work")
+                    .join("hlsl-shaderlab-extended"),
+            );
+            // 3. Flatpak Zed: ~/.var/app/dev.zed.Zed/data/zed/extensions/work/hlsl-shaderlab-extended
+            dirs.push(
+                PathBuf::from(&home)
+                    .join(".var")
+                    .join("app")
+                    .join("dev.zed.Zed")
+                    .join("data")
+                    .join("zed")
+                    .join("extensions")
+                    .join("work")
+                    .join("hlsl-shaderlab-extended"),
+            );
+        }
+    }
+
+    dirs
+}
 
 /// Attempts to resolve a given candidate path (absolute or relative) to an existing DXC executable.
 pub fn try_resolve_dxc(raw: &str) -> Option<String> {
@@ -477,14 +549,8 @@ pub fn try_resolve_dxc(raw: &str) -> Option<String> {
         }
     }
 
-    // Check relative to %LOCALAPPDATA%\Zed\extensions\work\hlsl-shaderlab-extended
-    #[cfg(windows)]
-    if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
-        let zed_work = PathBuf::from(local_app_data)
-            .join("Zed")
-            .join("extensions")
-            .join("work")
-            .join("hlsl-shaderlab-extended");
+    // Check relative to Zed extension work directories (Windows, Linux/Ubuntu, macOS)
+    for zed_work in get_zed_extension_work_dirs() {
         let candidate = zed_work.join(p);
         if candidate.is_file() {
             return Some(candidate.to_string_lossy().to_string());
@@ -581,14 +647,8 @@ pub fn find_dxc_path() -> String {
         }
     }
 
-    // 4. Check %LOCALAPPDATA%\Zed\extensions\work\hlsl-shaderlab-extended
-    #[cfg(windows)]
-    if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
-        let zed_work = PathBuf::from(local_app_data)
-            .join("Zed")
-            .join("extensions")
-            .join("work")
-            .join("hlsl-shaderlab-extended");
+    // 4. Check Zed extension work directories (Windows, Linux/Ubuntu, macOS)
+    for zed_work in get_zed_extension_work_dirs() {
         if zed_work.is_dir() {
             if let Some(found) = scan_dir_for_dxc(&zed_work) {
                 return found;
