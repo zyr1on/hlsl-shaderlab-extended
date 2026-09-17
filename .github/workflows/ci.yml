@@ -28,6 +28,7 @@ jobs:
   test-validator:
     name: Test hlsl_validator (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}

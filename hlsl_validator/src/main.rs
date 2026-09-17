@@ -591,6 +591,10 @@ fn scan_dir_for_dxc(dir: &Path) -> Option<String> {
                     }
                     #[cfg(not(windows))]
                     {
+                        let arch_direct = path.join("bin").join(TARGET_DXC_ARCH).join(DXC_BINARY_NAME);
+                        if arch_direct.is_file() {
+                            return Some(arch_direct.to_string_lossy().to_string());
+                        }
                         let bin_direct = path.join("bin").join(DXC_BINARY_NAME);
                         if bin_direct.is_file() {
                             return Some(bin_direct.to_string_lossy().to_string());
@@ -4094,5 +4098,18 @@ mod tests {
         assert_eq!(PathBuf::from(found.unwrap()), dummy_dxc);
 
         let _ = fs::remove_dir_all(&temp);
+
+        // Also test bin/dxc without arch subfolder (standard Linux release layout)
+        let temp2 = env::temp_dir().join(format!("test_zed_work_direct_{}", std::process::id()));
+        let dxc_dir2 = temp2.join("dxc-v1.9.2607").join("bin");
+        fs::create_dir_all(&dxc_dir2).unwrap();
+        let dummy_dxc2 = dxc_dir2.join(DXC_BINARY_NAME);
+        fs::write(&dummy_dxc2, b"dummy binary 2").unwrap();
+
+        let found2 = scan_dir_for_dxc(&temp2);
+        assert!(found2.is_some());
+        assert_eq!(PathBuf::from(found2.unwrap()), dummy_dxc2);
+
+        let _ = fs::remove_dir_all(&temp2);
     }
 }
