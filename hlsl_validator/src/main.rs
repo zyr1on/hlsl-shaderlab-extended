@@ -1878,9 +1878,12 @@ pub fn validate_missing_includes(
 
             let in_cache = doc_cache.keys().any(|k| {
                 let norm = normalize_uri(k);
-                norm.ends_with(&format!("/{}", inc_path_str))
-                    || norm.ends_with(&format!("\\{}", inc_path_str))
-                    || k.ends_with(inc_path_str)
+                if let Some(prefix) = norm.strip_suffix(inc_path_str) {
+                    if prefix.ends_with('/') || prefix.ends_with('\\') {
+                        return true;
+                    }
+                }
+                k.ends_with(inc_path_str)
             });
 
             if in_cache {
@@ -2034,9 +2037,10 @@ pub fn validate_shader(
             diagnostics.extend(validate_shader_pragmas(content, uri, doc_cache));
 
             // Extract shared HLSLINCLUDE / CGINCLUDE code across passes
-            let mut include_lines = Vec::new();
+            let mut shared_include = String::new();
             let mut in_include = false;
             let mut shared_include_start = 0;
+            let mut shared_include_count = 0;
             for (line_idx, line) in content.lines().enumerate() {
                 let trimmed = line.trim();
                 if trimmed == "HLSLINCLUDE" || trimmed == "CGINCLUDE" {
@@ -2049,42 +2053,39 @@ pub fn validate_shader(
                     continue;
                 }
                 if in_include {
+                    shared_include_count += 1;
                     if should_stub_include(trimmed) {
-                        include_lines.push(format!("// {}", line));
-                    } else {
-                        include_lines.push(line.to_string());
+                        shared_include.push_str("// ");
                     }
+                    shared_include.push_str(line);
+                    shared_include.push('\n');
                 }
             }
-            let shared_include = include_lines.join("\n");
-            let shared_include_count = if shared_include.is_empty() { 0 } else { include_lines.len() };
 
             let mut in_block = false;
             let mut block_start_line = 0;
-            let mut block_lines = Vec::new();
+            let mut block_code = String::new();
+            let mut stubs_count = 0;
 
             for (line_idx, line) in content.lines().enumerate() {
                 let trimmed = line.trim();
                 if trimmed == "HLSLPROGRAM" || trimmed == "CGPROGRAM" {
                     in_block = true;
                     block_start_line = line_idx + 1;
-                    block_lines.clear();
+                    block_code.clear();
+                    block_code.push_str(UNITY_COMPAT_PREAMBLE.trim_start());
+                    if !block_code.ends_with('\n') {
+                        block_code.push('\n');
+                    }
+                    stubs_count = block_code.lines().count();
+                    if !shared_include.is_empty() {
+                        block_code.push_str(&shared_include);
+                    }
                     continue;
                 }
                 if trimmed == "ENDHLSL" || trimmed == "ENDCG" {
                     if in_block {
                         in_block = false;
-                        let mut block_code = String::from(UNITY_COMPAT_PREAMBLE.trim_start());
-                        if !block_code.ends_with('\n') {
-                            block_code.push('\n');
-                        }
-                        let stubs_count = block_code.lines().count();
-                        if !shared_include.is_empty() {
-                            block_code.push_str(&shared_include);
-                            block_code.push('\n');
-                        }
-                        block_code.push_str(&block_lines.join("\n"));
-
                         let shared_info = if shared_include_count > 0 {
                             Some((shared_include_count, shared_include_start))
                         } else {
@@ -2099,10 +2100,10 @@ pub fn validate_shader(
 
                 if in_block {
                     if should_stub_include(trimmed) {
-                        block_lines.push(format!("// {}", line));
-                    } else {
-                        block_lines.push(line.to_string());
+                        block_code.push_str("// ");
                     }
+                    block_code.push_str(line);
+                    block_code.push('\n');
                 }
             }
         }
@@ -2241,9 +2242,8 @@ pub fn run_dxc_on_text(
     let stderr_bytes = stderr_handle.join().unwrap_or_default();
     let stderr = String::from_utf8_lossy(&stderr_bytes);
     let stdout = String::from_utf8_lossy(&stdout_bytes);
-    let combined = format!("{stderr}\n{stdout}");
 
-    for line in combined.lines() {
+    for line in stderr.lines().chain(stdout.lines()) {
         let (severity, rest, tag) = if let Some(idx) = line.find(": fatal error:") {
             (1, line[idx + 14..].trim(), ": fatal error:")
         } else if let Some(idx) = line.find(": error:") {
@@ -2347,31 +2347,39 @@ pub fn format_document(text: &str, tab_size: usize, insert_spaces: bool) -> Vec<
         "\t".to_string()
     };
 
-    let mut formatted_lines = Vec::new();
+    let mut new_text = String::with_capacity(text.len());
     let mut indent_level: usize = 0;
     let mut blank_count = 0;
+    let mut line_count: usize = 0;
+    let mut last_line_len = 0;
 
     for raw_line in text.lines() {
+        line_count += 1;
+        last_line_len = raw_line.len();
         let trimmed = raw_line.trim();
 
         if trimmed.is_empty() {
             blank_count += 1;
             if blank_count <= 1 {
-                formatted_lines.push(String::new());
+                new_text.push('\n');
             }
             continue;
         }
         blank_count = 0;
 
         if trimmed.starts_with('#') {
-            formatted_lines.push(trimmed.to_string());
+            new_text.push_str(trimmed);
+            new_text.push('\n');
             continue;
         }
 
         // Ignore lines that are comments so they don't alter indent levels
         if trimmed.starts_with("//") || trimmed.starts_with("/*") {
-            let line_indent = indent_unit.repeat(indent_level);
-            formatted_lines.push(format!("{}{}", line_indent, trimmed));
+            for _ in 0..indent_level {
+                new_text.push_str(&indent_unit);
+            }
+            new_text.push_str(trimmed);
+            new_text.push('\n');
             continue;
         }
 
@@ -2385,8 +2393,11 @@ pub fn format_document(text: &str, tab_size: usize, insert_spaces: bool) -> Vec<
         }
         indent_level = indent_level.saturating_sub(leading_close);
 
-        let line_indent = indent_unit.repeat(indent_level);
-        formatted_lines.push(format!("{}{}", line_indent, trimmed));
+        for _ in 0..indent_level {
+            new_text.push_str(&indent_unit);
+        }
+        new_text.push_str(trimmed);
+        new_text.push('\n');
 
         // Count braces in code only (ignoring trailing single-line comments)
         let code_part = trimmed.split("//").next().unwrap_or("").trim();
@@ -2396,9 +2407,9 @@ pub fn format_document(text: &str, tab_size: usize, insert_spaces: bool) -> Vec<
         indent_level = indent_level.saturating_sub(net_close_after) + open_count;
     }
 
-    let new_text = formatted_lines.join("\n") + "\n";
-    let line_count = text.lines().count();
-    let last_line_len = text.lines().last().map(|l| l.len()).unwrap_or(0);
+    if !new_text.is_empty() && !new_text.ends_with('\n') {
+        new_text.push('\n');
+    }
     let end_line = line_count.saturating_sub(1);
 
     vec![json!({
@@ -3292,12 +3303,12 @@ fn handle_completion(
                     // Fallback for member access '.' when target_type could not be inferred:
                     // Provide swizzles, common struct fields (positionHCS, uv, etc.) and texture methods
                     let mut fallback_items = Vec::new();
-                    let mut seen_fields = std::collections::HashSet::new();
+                    let mut seen_fields: std::collections::HashSet<&str> = std::collections::HashSet::new();
 
                     // 1. Swizzles
                     const COMMON_SWIZZLES: &[&str] = &["x", "y", "z", "w", "xy", "zw", "xyz", "rgb", "rgba"];
                     for (idx, sw) in COMMON_SWIZZLES.iter().enumerate() {
-                        if seen_fields.insert(sw.to_string()) {
+                        if seen_fields.insert(*sw) {
                             let sort_text = format!("00_{:02}_{}", idx, sw);
                             fallback_items.push(make_completion_item(
                                 sw,
@@ -3314,7 +3325,7 @@ fn handle_completion(
                     // 2. Struct fields from known structs in this file/includes
                     for s in &structs {
                         for f in &s.fields {
-                            if seen_fields.insert(f.name.clone()) {
+                            if seen_fields.insert(&f.name) {
                                 let sort_text = format!("05_{}", f.name);
                                 fallback_items.push(make_completion_item(
                                     &f.name,
@@ -3331,7 +3342,7 @@ fn handle_completion(
 
                     // 3. Common texture & buffer methods
                     for (idx, m) in docs::TEXTURE_METHODS.iter().enumerate() {
-                        if seen_fields.insert(m.name.to_string()) {
+                        if seen_fields.insert(m.name) {
                             let sort_text = format!("10_{:02}_{}", idx, m.name);
                             let snip = format!("{}$0", m.snippet);
                             fallback_items.push(make_completion_item(
@@ -3347,7 +3358,7 @@ fn handle_completion(
                     }
 
                     for (idx, m) in docs::BUFFER_METHODS.iter().enumerate() {
-                        if seen_fields.insert(m.name.to_string()) {
+                        if seen_fields.insert(m.name) {
                             let sort_text = format!("11_{:02}_{}", idx, m.name);
                             let snip = format!("{}$0", m.snippet);
                             fallback_items.push(make_completion_item(
@@ -3401,15 +3412,19 @@ fn handle_completion(
     });
 
     let mut items = Vec::new();
-    let mut seen_labels: std::collections::HashSet<String> = std::collections::HashSet::new();
-
     let (user_funcs, user_vars, user_structs) = signature::resolve_includes_and_scan_symbols(uri, doc, doc_cache);
+    let sl_props = if context == ShaderContext::UnityShaderLab {
+        signature::scan_shaderlab_properties(doc)
+    } else {
+        Vec::new()
+    };
+    let mut seen_labels: std::collections::HashSet<&str> = std::collections::HashSet::new();
 
     // 0. Parameters & Local Variables of Enclosing Function (Priority: HIGHEST!)
     if let Some(f) = signature::find_enclosing_function(&user_funcs, line_idx) {
         for (idx, p) in f.parsed_params.iter().enumerate() {
             if (word.is_empty() || starts_with_ignore_ascii_case(&p.name, word))
-                && seen_labels.insert(p.name.clone())
+                && seen_labels.insert(&p.name)
             {
                 let sort_text = format!("00_{:02}_{}", idx, p.name);
                 items.push(make_completion_item(
@@ -3426,7 +3441,7 @@ fn handle_completion(
 
         for (idx, lv) in f.local_vars.iter().filter(|v| v.line <= line_idx).enumerate() {
             if (word.is_empty() || starts_with_ignore_ascii_case(&lv.name, word))
-                && seen_labels.insert(lv.name.clone())
+                && seen_labels.insert(&lv.name)
             {
                 let sort_text = format!("01_{:02}_{}", idx, lv.name);
                 items.push(make_completion_item(
@@ -3445,7 +3460,7 @@ fn handle_completion(
     // 1. User-defined global variables & cbuffer members
     for (idx, v) in user_vars.iter().enumerate() {
         if (word.is_empty() || starts_with_ignore_ascii_case(&v.name, word))
-            && seen_labels.insert(v.name.clone())
+            && seen_labels.insert(&v.name)
         {
             let detail = if v.qualifier.is_empty() {
                 format!("{} {}", v.var_type, v.name)
@@ -3473,7 +3488,7 @@ fn handle_completion(
     // 2. User-defined functions
     for (idx, f) in user_funcs.iter().enumerate() {
         if (word.is_empty() || starts_with_ignore_ascii_case(&f.name, word))
-            && seen_labels.insert(f.name.clone())
+            && seen_labels.insert(&f.name)
         {
             let (insert_text, insert_format) = if following_has_paren {
                 (f.name.clone(), 1)
@@ -3499,7 +3514,7 @@ fn handle_completion(
     let structs = &user_structs;
     for (idx, s) in structs.iter().enumerate() {
         if (word.is_empty() || starts_with_ignore_ascii_case(&s.name, word))
-            && seen_labels.insert(s.name.clone())
+            && seen_labels.insert(&s.name)
         {
             let fields_doc = if s.fields.is_empty() {
                 String::new()
@@ -3523,10 +3538,9 @@ fn handle_completion(
 
     // 3b. Material properties from ShaderLab Properties block (for HLSL & CBuffer completion)
     if context == ShaderContext::UnityShaderLab {
-        let sl_props = signature::scan_shaderlab_properties(doc);
         for (idx, p) in sl_props.iter().enumerate() {
             if (word.is_empty() || starts_with_ignore_ascii_case(&p.name, word))
-                && seen_labels.insert(p.name.clone())
+                && seen_labels.insert(&p.name)
             {
                 let hlsl_type = match p.prop_type.as_str() {
                     "Float" => "float",
@@ -3568,7 +3582,7 @@ fn handle_completion(
         }
 
         if (word.is_empty() || starts_with_ignore_ascii_case(ev.name, word))
-            && seen_labels.insert(ev.name.to_string())
+            && seen_labels.insert(ev.name)
         {
             let kind = match ev.var_type {
                 "function" => 3, // Function
@@ -3614,7 +3628,7 @@ fn handle_completion(
         }
 
         if (word.is_empty() || starts_with_ignore_ascii_case(func.name, word))
-            && seen_labels.insert(func.name.to_string())
+            && seen_labels.insert(func.name)
         {
             let primary_overload = func.overloads.first().map(|o| o.label).unwrap_or(func.name);
             let (insert_text, insert_format) = if following_has_paren {
@@ -3643,7 +3657,7 @@ fn handle_completion(
     // 5. Built-in Types
     for (idx, t) in docs::BUILTIN_TYPES.iter().enumerate() {
         if (word.is_empty() || starts_with_ignore_ascii_case(t, word))
-            && seen_labels.insert((*t).to_string())
+            && seen_labels.insert(*t)
         {
             let sort_text = format!("35_{:03}_{}", idx, t);
             items.push(make_completion_item(
@@ -3668,7 +3682,7 @@ fn handle_completion(
     ];
     for (idx, kw) in hlsl_keywords.iter().enumerate() {
         if (word.is_empty() || starts_with_ignore_ascii_case(kw, word))
-            && seen_labels.insert((*kw).to_string())
+            && seen_labels.insert(*kw)
         {
             let sort_text = format!("40_{:03}_{}", idx, kw);
             items.push(make_completion_item(
@@ -3702,7 +3716,7 @@ fn handle_completion(
     ];
     for (idx, (label, detail, snip)) in snippets.iter().enumerate() {
         if (word.is_empty() || starts_with_ignore_ascii_case(label, word))
-            && seen_labels.insert((*label).to_string())
+            && seen_labels.insert(*label)
         {
             let sort_text = format!("50_{:02}_{}", idx, label);
             items.push(make_completion_item(

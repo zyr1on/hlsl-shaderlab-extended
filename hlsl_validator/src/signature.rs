@@ -746,15 +746,34 @@ pub fn scan_user_variables(
     source_name: Option<&str>,
     file_uri: Option<&str>,
 ) -> Vec<VariableSymbol> {
-    let funcs = scan_user_functions(text, None, None);
+    scan_user_variables_with_funcs(text, source_name, file_uri, None)
+}
+
+pub fn scan_user_variables_with_funcs(
+    text: &str,
+    source_name: Option<&str>,
+    file_uri: Option<&str>,
+    existing_funcs: Option<&[FunctionSignature]>,
+) -> Vec<VariableSymbol> {
+    let fallback_funcs;
+    let funcs: &[FunctionSignature] = match existing_funcs {
+        Some(f) => f,
+        None => {
+            fallback_funcs = scan_user_functions(text, None, None);
+            &fallback_funcs
+        }
+    };
     let mut results = Vec::new();
     let mut pending_doc = Vec::new();
     let mut block_depth: usize = 0;
     let mut current_block: Option<(String, bool)> = None; // (name, is_cbuffer)
+    let mut func_idx = 0;
 
     for (line_idx, raw_line) in text.lines().enumerate() {
-        let is_in_func = funcs.iter().any(|f| line_idx >= f.body_start_line && line_idx <= f.body_end_line);
-        if is_in_func {
+        while func_idx < funcs.len() && line_idx > funcs[func_idx].body_end_line {
+            func_idx += 1;
+        }
+        if func_idx < funcs.len() && line_idx >= funcs[func_idx].body_start_line && line_idx <= funcs[func_idx].body_end_line {
             continue;
         }
 
@@ -881,6 +900,32 @@ pub fn scan_user_variables(
     results
 }
 
+#[derive(Clone)]
+struct CachedIncludeSymbols {
+    mtime: std::time::SystemTime,
+    functions: Vec<FunctionSignature>,
+    variables: Vec<VariableSymbol>,
+    structs: Vec<StructDef>,
+    include_targets: Vec<String>,
+}
+
+static ON_DISK_SYMBOL_CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, CachedIncludeSymbols>>> =
+    std::sync::OnceLock::new();
+
+fn extract_include_targets(text: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("#include") {
+            let target = rest.trim().trim_matches(|c| c == '"' || c == '<' || c == '>');
+            if !target.is_empty() {
+                targets.push(target.to_string());
+            }
+        }
+    }
+    targets
+}
+
 ///// Resolves #include directives recursively and collects user functions, symbols & structs.
 pub fn resolve_includes_and_scan_symbols(
     uri: &str,
@@ -894,13 +939,18 @@ pub fn resolve_includes_and_scan_symbols(
     visited.insert(uri.to_string());
 
     // Scan the current active document first
-    all_functions.extend(scan_user_functions(doc_content, None, Some(uri)));
-    all_variables.extend(scan_user_variables(doc_content, None, Some(uri)));
-    all_structs.extend(scan_struct_definitions_with_uri(doc_content, Some(uri)));
+    let doc_funcs = scan_user_functions(doc_content, None, Some(uri));
+    let doc_vars = scan_user_variables_with_funcs(doc_content, None, Some(uri), Some(&doc_funcs));
+    let doc_structs = scan_struct_definitions_with_uri(doc_content, Some(uri));
+    let doc_includes = extract_include_targets(doc_content);
 
-    let mut queue = vec![(uri.to_string(), doc_content.to_string(), 0usize)];
+    all_functions.extend(doc_funcs);
+    all_variables.extend(doc_vars);
+    all_structs.extend(doc_structs);
 
-    while let Some((curr_uri, curr_content, depth)) = queue.pop() {
+    let mut queue = vec![(uri.to_string(), doc_includes, 0usize)];
+
+    while let Some((curr_uri, inc_targets, depth)) = queue.pop() {
         if depth >= 8 {
             continue;
         }
@@ -908,99 +958,135 @@ pub fn resolve_includes_and_scan_symbols(
         let curr_path = uri_to_path(&curr_uri);
         let curr_dir = curr_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf());
 
-        for line in curr_content.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("#include") {
-                let include_target = rest.trim().trim_matches(|c| c == '"' || c == '<' || c == '>');
-                if include_target.is_empty() {
-                    continue;
+        for include_target in &inc_targets {
+            let mut found_candidate: Option<(std::path::PathBuf, String)> = None;
+
+            // 1. Check relative to current file in doc_cache first, then on disk
+            if let Some(dir) = &curr_dir {
+                let candidate = dir.join(include_target);
+                let cand_uri = path_to_uri(&candidate);
+                if crate::get_document_from_cache(doc_cache, &cand_uri).is_some() {
+                    found_candidate = Some((candidate, cand_uri));
+                } else if candidate.is_file() {
+                    found_candidate = Some((candidate.clone(), cand_uri));
                 }
+            }
 
-                let mut found_candidate: Option<(std::path::PathBuf, String)> = None;
-
-                // 1. Check relative to current file in doc_cache first, then on disk
-                if let Some(dir) = &curr_dir {
-                    let candidate = dir.join(include_target);
-                    let cand_uri = path_to_uri(&candidate);
-                    if crate::get_document_from_cache(doc_cache, &cand_uri).is_some() {
-                        found_candidate = Some((candidate, cand_uri));
-                    } else if candidate.is_file() {
-                        found_candidate = Some((candidate.clone(), cand_uri));
+            // 2. Check doc_cache by filename/suffix match (for unsaved buffers or virtual URIs)
+            if found_candidate.is_none() {
+                let target_suffix = format!("/{}", include_target.replace('\\', "/"));
+                for k in doc_cache.keys() {
+                    if k.ends_with(&target_suffix) || k.ends_with(include_target.as_str()) {
+                        let path = uri_to_path(k).unwrap_or_else(|| std::path::PathBuf::from(include_target));
+                        found_candidate = Some((path, k.clone()));
+                        break;
                     }
                 }
+            }
 
-                // 2. Check doc_cache by filename/suffix match (for unsaved buffers or virtual URIs)
-                if found_candidate.is_none() {
-                    let target_suffix = format!("/{}", include_target.replace('\\', "/"));
-                    for k in doc_cache.keys() {
-                        if k.ends_with(&target_suffix) || k.ends_with(include_target) {
-                            let path = uri_to_path(k).unwrap_or_else(|| std::path::PathBuf::from(include_target));
-                            found_candidate = Some((path, k.clone()));
-                            break;
-                        }
+            // 3. Check search paths on disk
+            if found_candidate.is_none() {
+                let search_paths = crate::discover_include_paths(&curr_uri, None);
+                for sp in &search_paths {
+                    let direct = sp.join(include_target);
+                    if direct.is_file() {
+                        let uri = path_to_uri(&direct);
+                        found_candidate = Some((direct, uri));
+                        break;
                     }
-                }
 
-                // 3. Check search paths on disk
-                if found_candidate.is_none() {
-                    let search_paths = crate::discover_include_paths(&curr_uri, None);
-                    for sp in &search_paths {
-                        let direct = sp.join(include_target);
-                        if direct.is_file() {
-                            let uri = path_to_uri(&direct);
-                            found_candidate = Some((direct, uri));
-                            break;
-                        }
+                    // Handle Unity Packages/com.unity... mapped to Library/PackageCache
+                    let lower_target = include_target.to_lowercase();
+                    if lower_target.starts_with("packages/") {
+                        let pkg_sub = &include_target[9..];
+                        let cache_dir = if sp.ends_with("PackageCache") {
+                            Some(sp.clone())
+                        } else if sp.join("Library").join("PackageCache").is_dir() {
+                            Some(sp.join("Library").join("PackageCache"))
+                        } else {
+                            None
+                        };
 
-                        // Handle Unity Packages/com.unity... mapped to Library/PackageCache
-                        let lower_target = include_target.to_lowercase();
-                        if lower_target.starts_with("packages/") {
-                            let pkg_sub = &include_target[9..];
-                            let cache_dir = if sp.ends_with("PackageCache") {
-                                Some(sp.clone())
-                            } else if sp.join("Library").join("PackageCache").is_dir() {
-                                Some(sp.join("Library").join("PackageCache"))
-                            } else {
-                                None
-                            };
-
-                            if let Some(pcd) = cache_dir {
-                                if let Some((pkg_name, inner)) = pkg_sub.split_once('/') {
-                                    if let Ok(entries) = std::fs::read_dir(&pcd) {
-                                        for entry in entries.flatten() {
-                                            let file_name = entry.file_name().to_string_lossy().to_string();
-                                            if file_name.starts_with(pkg_name) && file_name.contains('@') {
-                                                let cand = entry.path().join(inner);
-                                                if cand.is_file() {
-                                                    let uri = path_to_uri(&cand);
-                                                    found_candidate = Some((cand, uri));
-                                                    break;
-                                                }
+                        if let Some(pcd) = cache_dir {
+                            if let Some((pkg_name, inner)) = pkg_sub.split_once('/') {
+                                if let Ok(entries) = std::fs::read_dir(&pcd) {
+                                    for entry in entries.flatten() {
+                                        let file_name = entry.file_name().to_string_lossy().to_string();
+                                        if file_name.starts_with(pkg_name) && file_name.contains('@') {
+                                            let cand = entry.path().join(inner);
+                                            if cand.is_file() {
+                                                let uri = path_to_uri(&cand);
+                                                found_candidate = Some((cand, uri));
+                                                break;
                                             }
                                         }
                                     }
                                 }
                             }
                         }
+                    }
 
-                        if found_candidate.is_some() {
-                            break;
-                        }
+                    if found_candidate.is_some() {
+                        break;
                     }
                 }
+            }
 
-                if let Some((candidate, inc_uri)) = found_candidate {
-                    if visited.insert(inc_uri.clone()) {
-                        let content = crate::get_document_from_cache(doc_cache, &inc_uri)
-                            .map(|s| s.to_string())
-                            .or_else(|| std::fs::read_to_string(&candidate).ok());
+            if let Some((candidate, inc_uri)) = found_candidate {
+                if visited.insert(inc_uri.clone()) {
+                    let inc_name = candidate.file_name().and_then(|n| n.to_str()).unwrap_or(include_target);
 
-                        if let Some(inc_content) = content {
-                            let inc_name = candidate.file_name().and_then(|n| n.to_str()).unwrap_or(include_target);
-                            all_functions.extend(scan_user_functions(&inc_content, Some(inc_name), Some(&inc_uri)));
-                            all_variables.extend(scan_user_variables(&inc_content, Some(inc_name), Some(&inc_uri)));
-                            all_structs.extend(scan_struct_definitions_with_uri(&inc_content, Some(&inc_uri)));
-                            queue.push((inc_uri, inc_content, depth + 1));
+                    // If open in editor, use live doc_cache content
+                    if let Some(inc_content) = crate::get_document_from_cache(doc_cache, &inc_uri) {
+                        let funcs = scan_user_functions(inc_content, Some(inc_name), Some(&inc_uri));
+                        let vars = scan_user_variables_with_funcs(inc_content, Some(inc_name), Some(&inc_uri), Some(&funcs));
+                        let structs = scan_struct_definitions_with_uri(inc_content, Some(&inc_uri));
+                        let child_includes = extract_include_targets(inc_content);
+
+                        all_functions.extend(funcs);
+                        all_variables.extend(vars);
+                        all_structs.extend(structs);
+                        queue.push((inc_uri, child_includes, depth + 1));
+                    } else if let Ok(m) = std::fs::metadata(&candidate) {
+                        let mtime = m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                        let cache_lock = ON_DISK_SYMBOL_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+
+                        let cached_entry = if let Ok(guard) = cache_lock.lock() {
+                            guard.get(&candidate).filter(|entry| entry.mtime == mtime).cloned()
+                        } else {
+                            None
+                        };
+
+                        if let Some(entry) = cached_entry {
+                            all_functions.extend(entry.functions);
+                            all_variables.extend(entry.variables);
+                            all_structs.extend(entry.structs);
+                            queue.push((inc_uri, entry.include_targets, depth + 1));
+                        } else if let Ok(inc_content) = std::fs::read_to_string(&candidate) {
+                            let funcs = scan_user_functions(&inc_content, Some(inc_name), Some(&inc_uri));
+                            let vars = scan_user_variables_with_funcs(&inc_content, Some(inc_name), Some(&inc_uri), Some(&funcs));
+                            let structs = scan_struct_definitions_with_uri(&inc_content, Some(&inc_uri));
+                            let child_includes = extract_include_targets(&inc_content);
+
+                            let new_entry = CachedIncludeSymbols {
+                                mtime,
+                                functions: funcs.clone(),
+                                variables: vars.clone(),
+                                structs: structs.clone(),
+                                include_targets: child_includes.clone(),
+                            };
+
+                            if let Ok(mut guard) = cache_lock.lock() {
+                                if guard.len() > 500 {
+                                    guard.clear();
+                                }
+                                guard.insert(candidate, new_entry);
+                            }
+
+                            all_functions.extend(funcs);
+                            all_variables.extend(vars);
+                            all_structs.extend(structs);
+                            queue.push((inc_uri, child_includes, depth + 1));
                         }
                     }
                 }
