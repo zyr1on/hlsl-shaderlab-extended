@@ -36,10 +36,10 @@ fn resolve_configured_path(configured: Option<String>, worktree: &zed::Worktree)
     if fs::metadata(trimmed).is_ok_and(|s| s.is_file()) {
         return Some(trimmed.to_string());
     }
-    if let Some(resolved) = worktree.which(trimmed) {
-        if fs::metadata(&resolved).is_ok_and(|s| s.is_file()) {
-            return Some(resolved);
-        }
+    if let Some(resolved) = worktree.which(trimmed)
+        && fs::metadata(&resolved).is_ok_and(|s| s.is_file())
+    {
+        return Some(resolved);
     }
     None
 }
@@ -133,11 +133,11 @@ impl HlslShaderlabExtension {
         }
 
         // 1) Check system PATH
-        if let Some(path) = worktree.which("dxc").or_else(|| worktree.which("dxc.exe")) {
-            if fs::metadata(&path).is_ok_and(|s| s.is_file()) {
-                self.cached_dxc = Some(path.clone());
-                return Ok(path);
-            }
+        if let Some(path) = worktree.which("dxc").or_else(|| worktree.which("dxc.exe"))
+            && fs::metadata(&path).is_ok_and(|s| s.is_file())
+        {
+            self.cached_dxc = Some(path.clone());
+            return Ok(path);
         }
 
         // 2) Check cached binary
@@ -261,11 +261,11 @@ impl HlslShaderlabExtension {
         }
 
         // 1) Check system PATH
-        if let Some(path) = worktree.which(&binary_name).or_else(|| worktree.which("hlsl_validator")) {
-            if fs::metadata(&path).is_ok_and(|s| s.is_file()) {
-                self.cached_hlsl_validator = Some(path.clone());
-                return Ok(path);
-            }
+        if let Some(path) = worktree.which(&binary_name).or_else(|| worktree.which("hlsl_validator"))
+            && fs::metadata(&path).is_ok_and(|s| s.is_file())
+        {
+            self.cached_hlsl_validator = Some(path.clone());
+            return Ok(path);
         }
 
         // 2) Check cached path
