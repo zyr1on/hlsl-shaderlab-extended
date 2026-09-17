@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Unified overload sorting and deterministic active parameter highlighting.
 - **Tree-sitter Syntax Enhancements**:
   - Added language queries (`brackets.scm`, `indents.scm`, `outline.scm`) for both HLSL and ShaderLab to support native bracket matching, auto-indentation, and breadcrumbs in Zed.
+- **Robust Multi-Architecture DXC Discovery & Dynamic Configuration**:
+  - Implemented multi-stage DXC path resolution supporting `x64`, `arm64`, and `x86` target architectures with automatic fallback from `arm64` to `x64` (Windows on ARM emulation).
+  - Prioritized system `PATH` check before attempting release downloads, seamlessly detecting globally installed DXC, Windows Kits, and Vulkan SDK compilers.
+  - Added relative path resolution against `current_exe().parent()` and grandparent directory (`<zed_extension_work_dir>`), enabling seamless execution of downloaded DXC binaries regardless of workspace CWD.
+  - Enabled dynamic `dxc_path` updates via LSP `initializationOptions` and `workspace/didChangeConfiguration` using thread-safe `Arc<RwLock<String>>`.
+  - Added error logging to stderr when DXC fails to spawn for clear diagnostics in Zed logs.
 - **Process & Thread Safety Protections**:
   - Added Windows process flag `CREATE_NO_WINDOW` (`0x0800_0000`) for silent Microsoft DXC background compilation.
   - Implemented 4-second hard timeout for DXC child execution with guaranteed `.kill()` and `.wait()` cleanup, eliminating hanging threads and zombie processes.

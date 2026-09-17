@@ -430,29 +430,216 @@ pub fn normalize_uri(uri: &str) -> String {
     }
 }
 
-pub fn find_dxc_path() -> String {
-    if let Ok(p) = env::var("DXC_PATH") {
-        let trimmed = p.trim();
-        if !trimmed.is_empty() && Path::new(trimmed).is_file() {
-            return trimmed.to_string();
+#[cfg(target_arch = "aarch64")]
+const TARGET_DXC_ARCH: &str = "arm64";
+#[cfg(target_arch = "x86")]
+const TARGET_DXC_ARCH: &str = "x86";
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86")))]
+const TARGET_DXC_ARCH: &str = "x64";
+
+#[cfg(windows)]
+const DXC_BINARY_NAME: &str = "dxc.exe";
+#[cfg(not(windows))]
+const DXC_BINARY_NAME: &str = "dxc";
+
+/// Attempts to resolve a given candidate path (absolute or relative) to an existing DXC executable.
+pub fn try_resolve_dxc(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let p = Path::new(trimmed);
+    if p.is_file() {
+        return Some(p.to_string_lossy().to_string());
+    }
+
+    // If relative, resolve against current_exe parent / grandparent (Zed extension work dir)
+    if let Ok(exe) = env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let candidate = parent.join(p);
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+            if let Some(grandparent) = parent.parent() {
+                let candidate = grandparent.join(p);
+                if candidate.is_file() {
+                    return Some(candidate.to_string_lossy().to_string());
+                }
+            }
         }
     }
 
-    #[cfg(windows)]
-    let binary_name = "dxc.exe";
-    #[cfg(not(windows))]
-    let binary_name = "dxc";
+    // Also check relative to current working directory
+    if let Ok(cwd) = env::current_dir() {
+        let candidate = cwd.join(p);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
 
+    // Check relative to %LOCALAPPDATA%\Zed\extensions\work\hlsl-shaderlab-extended
+    #[cfg(windows)]
+    if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+        let zed_work = PathBuf::from(local_app_data)
+            .join("Zed")
+            .join("extensions")
+            .join("work")
+            .join("hlsl-shaderlab-extended");
+        let candidate = zed_work.join(p);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    None
+}
+
+/// Scans a directory for any dxc* folder and looks for the appropriate architecture binary.
+fn scan_dir_for_dxc(dir: &Path) -> Option<String> {
+    let entries = fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.to_ascii_lowercase().starts_with("dxc") {
+                    #[cfg(windows)]
+                    {
+                        let primary = path.join("bin").join(TARGET_DXC_ARCH).join(DXC_BINARY_NAME);
+                        if primary.is_file() {
+                            return Some(primary.to_string_lossy().to_string());
+                        }
+                        if TARGET_DXC_ARCH == "arm64" {
+                            let x64_fb = path.join("bin").join("x64").join(DXC_BINARY_NAME);
+                            if x64_fb.is_file() {
+                                return Some(x64_fb.to_string_lossy().to_string());
+                            }
+                        }
+                        let bin_direct = path.join("bin").join(DXC_BINARY_NAME);
+                        if bin_direct.is_file() {
+                            return Some(bin_direct.to_string_lossy().to_string());
+                        }
+                        let root_direct = path.join(DXC_BINARY_NAME);
+                        if root_direct.is_file() {
+                            return Some(root_direct.to_string_lossy().to_string());
+                        }
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        let bin_direct = path.join("bin").join(DXC_BINARY_NAME);
+                        if bin_direct.is_file() {
+                            return Some(bin_direct.to_string_lossy().to_string());
+                        }
+                        let root_direct = path.join(DXC_BINARY_NAME);
+                        if root_direct.is_file() {
+                            return Some(root_direct.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Locates the DXC binary with the following priority:
+/// 1. `DXC_PATH` environment variable (if valid)
+/// 2. System `PATH`
+/// 3. Neighbor directories of `current_exe()` (Zed extension work directory)
+/// 4. `%LOCALAPPDATA%\Zed\extensions\work\hlsl-shaderlab-extended`
+/// 5. Windows 10/11 Kits (DirectXShaderCompiler from Windows SDK)
+/// 6. `%VULKAN_SDK%\Bin\dxc.exe`
+/// 7. Fallback to `"dxc.exe"` / `"dxc"`
+pub fn find_dxc_path() -> String {
+    // 1. Explicit DXC_PATH env var
+    if let Ok(p) = env::var("DXC_PATH") {
+        if let Some(resolved) = try_resolve_dxc(&p) {
+            return resolved;
+        }
+    }
+
+    // 2. System PATH check
     if let Ok(path_var) = env::var("PATH") {
         for dir in env::split_paths(&path_var) {
-            let candidate = dir.join(binary_name);
+            let candidate = dir.join(DXC_BINARY_NAME);
             if candidate.is_file() {
                 return candidate.to_string_lossy().to_string();
             }
         }
     }
 
-    binary_name.to_string()
+    // 3. Scan neighbor directories of current_exe() (e.g. extension work dir where dxc-* is unpacked)
+    if let Ok(exe) = env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            if let Some(found) = scan_dir_for_dxc(parent) {
+                return found;
+            }
+            if let Some(grandparent) = parent.parent() {
+                if let Some(found) = scan_dir_for_dxc(grandparent) {
+                    return found;
+                }
+            }
+        }
+    }
+
+    // 4. Check %LOCALAPPDATA%\Zed\extensions\work\hlsl-shaderlab-extended
+    #[cfg(windows)]
+    if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+        let zed_work = PathBuf::from(local_app_data)
+            .join("Zed")
+            .join("extensions")
+            .join("work")
+            .join("hlsl-shaderlab-extended");
+        if zed_work.is_dir() {
+            if let Some(found) = scan_dir_for_dxc(&zed_work) {
+                return found;
+            }
+        }
+    }
+
+    // 5. Check Windows Kits (Windows 10/11 SDK)
+    #[cfg(windows)]
+    {
+        let kits_bin = Path::new(r"C:\Program Files (x86)\Windows Kits\10\bin");
+        if kits_bin.is_dir() {
+            if let Ok(entries) = fs::read_dir(kits_bin) {
+                let mut versions: Vec<PathBuf> = entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.is_dir())
+                    .collect();
+                versions.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+
+                for vdir in versions {
+                    let arch_candidate = vdir.join(TARGET_DXC_ARCH).join(DXC_BINARY_NAME);
+                    if arch_candidate.is_file() {
+                        return arch_candidate.to_string_lossy().to_string();
+                    }
+                    let x64_candidate = vdir.join("x64").join(DXC_BINARY_NAME);
+                    if x64_candidate.is_file() {
+                        return x64_candidate.to_string_lossy().to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    // 6. Check Vulkan SDK
+    if let Ok(vulkan_sdk) = env::var("VULKAN_SDK") {
+        let candidate = PathBuf::from(&vulkan_sdk).join("Bin").join(DXC_BINARY_NAME);
+        if candidate.is_file() {
+            return candidate.to_string_lossy().to_string();
+        }
+        #[cfg(not(windows))]
+        {
+            let candidate_unix = PathBuf::from(&vulkan_sdk).join("bin").join(DXC_BINARY_NAME);
+            if candidate_unix.is_file() {
+                return candidate_unix.to_string_lossy().to_string();
+            }
+        }
+    }
+
+    // 7. Fallback
+    DXC_BINARY_NAME.to_string()
 }
 
 static INCLUDE_CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Vec<PathBuf>>>> = std::sync::OnceLock::new();
@@ -1943,7 +2130,10 @@ pub fn run_dxc_on_text(
 
     let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
         Ok(c) => c,
-        Err(_) => return diagnostics,
+        Err(e) => {
+            eprintln!("[hlsl_validator] Failed to spawn DXC at '{}': {e}", dxc_path);
+            return diagnostics;
+        }
     };
 
     let mut stdout_pipe = child.stdout.take();
@@ -3507,7 +3697,7 @@ fn get_doc_or_read<'a>(cache: &'a HashMap<String, String>, uri: &str, owned: &'a
 }
 
 fn main() {
-    let dxc_path = find_dxc_path();
+    let dxc_path_shared = Arc::new(RwLock::new(find_dxc_path()));
 
     let (tx, rx): (Sender<ValidationTask>, Receiver<ValidationTask>) = mpsc::channel();
     let doc_cache: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
@@ -3518,7 +3708,7 @@ fn main() {
     let stdout_shared = Arc::new(Mutex::new(io::stdout()));
     let stdout_worker = Arc::clone(&stdout_shared);
 
-    let worker_dxc = dxc_path.clone();
+    let worker_dxc = Arc::clone(&dxc_path_shared);
     let worker_ws = Arc::clone(&workspace_root);
     let worker_cache = Arc::clone(&doc_cache);
     thread::spawn(move || {
@@ -3551,9 +3741,10 @@ fn main() {
             for uri in ready_uris {
                 if let Some((task, _)) = pending_tasks.remove(&uri) {
                     let ws_opt = worker_ws.read().ok().and_then(|g| g.clone());
+                    let current_dxc = worker_dxc.read().map(|g| g.clone()).unwrap_or_else(|_| "dxc.exe".to_string());
                     let diags = {
                         let cache_guard = worker_cache.read().unwrap();
-                        validate_shader(&task.uri, &task.content, &worker_dxc, ws_opt.as_deref(), &cache_guard)
+                        validate_shader(&task.uri, &task.content, &current_dxc, ws_opt.as_deref(), &cache_guard)
                     };
                     send_diagnostics(&stdout_worker, &task.uri, &diags);
                 }
@@ -3623,6 +3814,20 @@ fn main() {
                                 *g = Some(ws);
                             }
                         }
+
+                        if let Some(opts) = params.get("initializationOptions") {
+                            let keys = ["dxc_path", "dxcPath", "dxc"];
+                            for key in keys {
+                                if let Some(p) = opts.get(key).and_then(|v| v.as_str()) {
+                                    if let Some(resolved) = try_resolve_dxc(p) {
+                                        if let Ok(mut g) = dxc_path_shared.write() {
+                                            *g = resolved;
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     let result = json!({
@@ -3642,6 +3847,23 @@ fn main() {
                         }
                     });
                     write_lsp_response(&stdout_shared, id, result);
+                }
+            }
+            "workspace/didChangeConfiguration" => {
+                if let Some(params) = msg.get("params") {
+                    if let Some(settings) = params.get("settings") {
+                        let keys = ["dxc_path", "dxcPath", "dxc"];
+                        for key in keys {
+                            if let Some(p) = settings.get(key).and_then(|v| v.as_str()) {
+                                if let Some(resolved) = try_resolve_dxc(p) {
+                                    if let Ok(mut g) = dxc_path_shared.write() {
+                                        *g = resolved;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             "textDocument/didOpen" => {
@@ -3760,5 +3982,57 @@ fn main() {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dxc_architecture_constants() {
+        assert!(!TARGET_DXC_ARCH.is_empty());
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(TARGET_DXC_ARCH, "x64");
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(TARGET_DXC_ARCH, "arm64");
+        #[cfg(target_arch = "x86")]
+        assert_eq!(TARGET_DXC_ARCH, "x86");
+    }
+
+    #[test]
+    fn test_try_resolve_dxc_empty_and_missing() {
+        assert_eq!(try_resolve_dxc(""), None);
+        assert_eq!(try_resolve_dxc("   "), None);
+        assert_eq!(try_resolve_dxc("definitely_non_existent_binary_xyz123.exe"), None);
+    }
+
+    #[test]
+    fn test_try_resolve_dxc_existing_file() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let resolved = try_resolve_dxc(manifest.to_str().unwrap());
+        assert!(resolved.is_some());
+        assert!(Path::new(&resolved.unwrap()).is_file());
+    }
+
+    #[test]
+    fn test_find_dxc_path_not_empty() {
+        let path = find_dxc_path();
+        assert!(!path.trim().is_empty());
+    }
+
+    #[test]
+    fn test_scan_dir_for_dxc_mock_work_dir() {
+        let temp = env::temp_dir().join(format!("test_zed_work_{}", std::process::id()));
+        let dxc_dir = temp.join("dxc-v1.9.2607").join("bin").join(TARGET_DXC_ARCH);
+        fs::create_dir_all(&dxc_dir).unwrap();
+        let dummy_dxc = dxc_dir.join(DXC_BINARY_NAME);
+        fs::write(&dummy_dxc, b"dummy binary").unwrap();
+
+        let found = scan_dir_for_dxc(&temp);
+        assert!(found.is_some());
+        assert_eq!(PathBuf::from(found.unwrap()), dummy_dxc);
+
+        let _ = fs::remove_dir_all(&temp);
     }
 }

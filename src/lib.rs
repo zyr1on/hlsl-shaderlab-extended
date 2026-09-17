@@ -78,6 +78,12 @@ fn locate_dxc(version_dir: &str, is_windows: bool, arch: zed::Architecture) -> O
         if fs::metadata(&preferred).is_ok_and(|s| s.is_file()) {
             return Some(preferred);
         }
+        if matches!(arch, zed::Architecture::Aarch64) {
+            let x64_fb = format!("{version_dir}/bin/x64/dxc.exe");
+            if fs::metadata(&x64_fb).is_ok_and(|s| s.is_file()) {
+                return Some(x64_fb);
+            }
+        }
         find_file_recursive(dir_path, "dxc.exe").map(|p| p.to_string_lossy().to_string())
     } else {
         let preferred = format!("{version_dir}/bin/dxc");
@@ -133,7 +139,7 @@ impl HlslShaderlabExtension {
         }
 
         // 1) Check system PATH
-        if let Some(path) = worktree.which("dxc").or_else(|| worktree.which("dxc.exe"))
+        if let Some(path) = worktree.which("dxc.exe").or_else(|| worktree.which("dxc"))
             && fs::metadata(&path).is_ok_and(|s| s.is_file())
         {
             self.cached_dxc = Some(path.clone());
