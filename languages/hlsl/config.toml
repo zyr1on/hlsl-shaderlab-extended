@@ -2,7 +2,7 @@ name = "HLSL"
 grammar = "hlsl"
 path_suffixes = [
     "hlsl", "hlsli", "fx",
-    "usf", "ush"
+    "usf", "ush", "compute"
 ]
 line_comments = ["// "]
 block_comment = { start = "/* ", prefix = "* ", end = "*/", tab_size = 1 }

@@ -27,7 +27,7 @@ Powered by a lightweight Rust LSP server (`hlsl_validator`) and the **Microsoft 
 
 | Language | File Extensions |
 | :--- | :--- |
-| **HLSL** | `.hlsl`, `.hlsli`, `.fx`, `.usf`, `.ush` |
+| **HLSL** | `.hlsl`, `.hlsli`, `.fx`, `.usf`, `.ush`, `.compute` |
 | **ShaderLab** | `.shader`, `.cginc` |
 
 ---

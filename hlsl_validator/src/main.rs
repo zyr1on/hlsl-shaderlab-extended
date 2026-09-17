@@ -57,8 +57,9 @@ pub fn detect_shader_context(uri: &str, content: &str) -> ShaderContext {
         return ShaderContext::UnrealEngine;
     }
 
-    // 3. Unity HLSL / CG / URP / HDRP / 2D: includes, macros, or built-in variables
+    // 3. Unity HLSL / CG / URP / HDRP / 2D / Compute: includes, macros, or built-in variables
     let in_unity_dir = uri.ends_with(".cginc")
+        || uri.ends_with(".compute")
         || uri.contains("com.unity.render-pipelines")
         || uri.contains("/Assets/")
         || uri.contains("\\Assets\\")
@@ -68,6 +69,7 @@ pub fn detect_shader_context(uri: &str, content: &str) -> ShaderContext {
     if in_unity_dir
         || content.contains("HLSLPROGRAM")
         || content.contains("CGPROGRAM")
+        || content.contains("#pragma kernel")
         || content.contains("CBUFFER_START(UnityPerMaterial)")
         || content.contains("TransformObjectToHClip")
         || content.contains("TransformObjectToWorld")
@@ -1930,6 +1932,8 @@ pub fn run_dxc_on_text(
     cmd.arg("-T").arg("lib_6_3");
     cmd.arg("-HV").arg("2021");
     cmd.arg("-O0");
+    cmd.arg("-Wno-misplaced-attributes");
+    cmd.arg("-Wno-unknown-pragmas");
 
     for inc in include_dirs {
         cmd.arg("-I").arg(inc);
@@ -2004,6 +2008,12 @@ pub fn run_dxc_on_text(
                 || rest.contains("TerrainEngine.cginc")
                 || rest.contains("Engine")
                 || rest.contains(".ush"))
+        {
+            continue;
+        }
+
+        if rest.contains("attribute 'numthreads' ignored")
+            || rest.contains("unknown pragma ignored")
         {
             continue;
         }
@@ -2851,6 +2861,24 @@ fn handle_completion(
                             return json!(field_items);
                         }
 
+                        // RWTexture methods
+                        if target_type.starts_with("RWTexture") {
+                            let method_items: Vec<Value> = docs::RWTEXTURE_METHODS.iter().enumerate().map(|(idx, m)| {
+                                let sort_text = format!("00_{:02}_{}", idx, m.name);
+                                let snip = format!("{}$0", m.snippet);
+                                make_completion_item(
+                                    m.name,
+                                    2,
+                                    m.signature,
+                                    m.description,
+                                    (&snip, 2),
+                                    &member_range,
+                                    &sort_text,
+                                )
+                            }).collect();
+                            return json!(method_items);
+                        }
+
                         // Texture methods
                         if target_type.starts_with("Texture") {
                             let method_items: Vec<Value> = docs::TEXTURE_METHODS.iter().enumerate().map(|(idx, m)| {
@@ -3047,10 +3075,26 @@ fn handle_completion(
                         }
                     }
 
-                    // 3. Common texture methods
+                    // 3. Common texture & buffer methods
                     for (idx, m) in docs::TEXTURE_METHODS.iter().enumerate() {
                         if seen_fields.insert(m.name.to_string()) {
                             let sort_text = format!("10_{:02}_{}", idx, m.name);
+                            let snip = format!("{}$0", m.snippet);
+                            fallback_items.push(make_completion_item(
+                                m.name,
+                                2,
+                                m.signature,
+                                m.description,
+                                (&snip, 2),
+                                &member_range,
+                                &sort_text,
+                            ));
+                        }
+                    }
+
+                    for (idx, m) in docs::BUFFER_METHODS.iter().enumerate() {
+                        if seen_fields.insert(m.name.to_string()) {
+                            let sort_text = format!("11_{:02}_{}", idx, m.name);
                             let snip = format!("{}$0", m.snippet);
                             fallback_items.push(make_completion_item(
                                 m.name,
@@ -3362,10 +3406,11 @@ fn handle_completion(
 
     // 6. Built-in Keywords (HLSL only, exclude ShaderLab keywords)
     let hlsl_keywords = [
-        "struct", "cbuffer", "tbuffer", "register", "static", "const", "inline",
+        "groupshared", "cbuffer", "tbuffer", "struct", "register", "packoffset",
+        "static", "const", "inline", "extern", "volatile", "precise",
         "return", "if", "else", "for", "while", "do", "switch", "case", "default",
         "break", "continue", "discard", "true", "false",
-        "in", "out", "inout", "packoffset",
+        "in", "out", "inout", "row_major", "column_major", "numthreads",
     ];
     for (idx, kw) in hlsl_keywords.iter().enumerate() {
         if (word.is_empty() || starts_with_ignore_ascii_case(kw, word))

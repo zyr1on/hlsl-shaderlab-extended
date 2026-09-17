@@ -1792,14 +1792,24 @@ pub static BUILTIN_TYPES: &[&str] = &[
     // Matrices
     "float4x4", "float3x3", "float2x2",
     "half4x4", "half3x3", "matrix",
-    // Textures & Samplers
-    "Texture2D", "Texture2DArray", "Texture3D", "TextureCube",
+    // Standard Textures & Samplers
+    "Texture1D", "Texture1DArray",
+    "Texture2D", "Texture2DArray", "Texture2DMS", "Texture2DMSArray",
+    "Texture3D", "TextureCube", "TextureCubeArray",
     "SamplerState", "SamplerComparisonState",
     "sampler2D", "samplerCUBE",
-    // Buffers
-    "tbuffer",
+    // Compute Shader & UAV Writable Textures
+    "RWTexture1D", "RWTexture1DArray",
+    "RWTexture2D", "RWTexture2DArray", "RWTexture3D",
+    // Buffers & Streams
+    "Buffer", "RWBuffer",
     "StructuredBuffer", "RWStructuredBuffer",
+    "AppendStructuredBuffer", "ConsumeStructuredBuffer",
     "ByteAddressBuffer", "RWByteAddressBuffer",
+    "tbuffer",
+    "RasterizerOrderedTexture2D", "RasterizerOrderedStructuredBuffer", "RasterizerOrderedByteAddressBuffer",
+    "PointStream", "LineStream", "TriangleStream",
+    "InputPatch", "OutputPatch",
 ];
 
 pub static BUILTIN_VARIABLES: &[(&str, &str)] = &[
@@ -1889,11 +1899,13 @@ pub static BUILTIN_VARIABLES: &[(&str, &str)] = &[
 ];
 
 pub static BUILTIN_KEYWORDS: &[&str] = &[
-    // HLSL Keywords
-    "struct", "cbuffer", "register", "static", "const", "inline",
+    // HLSL Keywords & Qualifiers
+    "groupshared", "cbuffer", "tbuffer", "struct", "register", "packoffset",
+    "static", "const", "inline", "extern", "volatile", "precise",
     "return", "if", "else", "for", "while", "do", "switch", "case", "default",
     "break", "continue", "discard", "true", "false",
-    "in", "out", "inout", "packoffset",
+    "in", "out", "inout", "row_major", "column_major",
+    "numthreads",
     // ShaderLab Keywords
     "Shader", "Properties", "SubShader", "Pass", "Tags",
     "Blend", "BlendOp", "ZWrite", "ZTest", "ZClip", "Cull", "ColorMask", "Offset",
@@ -1962,9 +1974,72 @@ pub static TEXTURE_METHODS: &[MethodInfo] = &[
         snippet: "GetDimensions($1, $2)",
         description: "### `Texture.GetDimensions`\n*HLSL Texture Method*\n\nRetrieves texture dimensions (width and height in texels).",
     },
+    MethodInfo {
+        name: "Gather",
+        signature: "float4 Gather(SamplerState s, float2 uv)",
+        snippet: "Gather($1, $2)",
+        description: "### `Texture.Gather`\n*HLSL Texture Method*\n\nGets the four texel values that would be used in a bi-linear filtering operation.",
+    },
+    MethodInfo {
+        name: "GatherRed",
+        signature: "float4 GatherRed(SamplerState s, float2 uv)",
+        snippet: "GatherRed($1, $2)",
+        description: "### `Texture.GatherRed`\n*HLSL Texture Method*\n\nGets the red component of the four texel values used in bi-linear filtering.",
+    },
+    MethodInfo {
+        name: "GatherGreen",
+        signature: "float4 GatherGreen(SamplerState s, float2 uv)",
+        snippet: "GatherGreen($1, $2)",
+        description: "### `Texture.GatherGreen`\n*HLSL Texture Method*\n\nGets the green component of the four texel values used in bi-linear filtering.",
+    },
+    MethodInfo {
+        name: "GatherBlue",
+        signature: "float4 GatherBlue(SamplerState s, float2 uv)",
+        snippet: "GatherBlue($1, $2)",
+        description: "### `Texture.GatherBlue`\n*HLSL Texture Method*\n\nGets the blue component of the four texel values used in bi-linear filtering.",
+    },
+    MethodInfo {
+        name: "GatherAlpha",
+        signature: "float4 GatherAlpha(SamplerState s, float2 uv)",
+        snippet: "GatherAlpha($1, $2)",
+        description: "### `Texture.GatherAlpha`\n*HLSL Texture Method*\n\nGets the alpha component of the four texel values used in bi-linear filtering.",
+    },
+    MethodInfo {
+        name: "GatherCmp",
+        signature: "float4 GatherCmp(SamplerComparisonState s, float2 uv, float compare_value)",
+        snippet: "GatherCmp($1, $2, $3)",
+        description: "### `Texture.GatherCmp`\n*HLSL Texture Method*\n\nSamples four texels, compares each against a reference value, and returns comparison results in a float4.",
+    },
+    MethodInfo {
+        name: "CalculateLevelOfDetail",
+        signature: "float CalculateLevelOfDetail(SamplerState s, float2 uv)",
+        snippet: "CalculateLevelOfDetail($1, $2)",
+        description: "### `Texture.CalculateLevelOfDetail`\n*HLSL Texture Method*\n\nCalculates the mipmap level of detail from UV gradients.",
+    },
+];
+
+pub static RWTEXTURE_METHODS: &[MethodInfo] = &[
+    MethodInfo {
+        name: "GetDimensions",
+        signature: "void GetDimensions(out uint width, out uint height)",
+        snippet: "GetDimensions($1, $2)",
+        description: "### `RWTexture.GetDimensions`\n*HLSL Unordered Access View Method*\n\nRetrieves the dimensions (width and height in texels) of this writable texture UAV.",
+    },
+    MethodInfo {
+        name: "Load",
+        signature: "float4 Load(int2 location)",
+        snippet: "Load($1)",
+        description: "### `RWTexture.Load`\n*HLSL Unordered Access View Method*\n\nReads raw texel data from this writable UAV at the specified integer coordinate without sampling.",
+    },
 ];
 
 pub static BUFFER_METHODS: &[MethodInfo] = &[
+    MethodInfo {
+        name: "GetDimensions",
+        signature: "void GetDimensions(out uint numStructs, out uint stride)",
+        snippet: "GetDimensions($1, $2)",
+        description: "### `Buffer.GetDimensions`\n*HLSL Buffer Method*\n\nRetrieves the number of elements and byte stride of the buffer.",
+    },
     MethodInfo {
         name: "Load",
         signature: "T Load(int location)",
@@ -1972,10 +2047,124 @@ pub static BUFFER_METHODS: &[MethodInfo] = &[
         description: "### `StructuredBuffer.Load`\n*HLSL Buffer Method*\n\nReads an element from the buffer at the specified index.",
     },
     MethodInfo {
-        name: "GetDimensions",
-        signature: "void GetDimensions(out uint numStructs, out uint stride)",
-        snippet: "GetDimensions($1, $2)",
-        description: "### `StructuredBuffer.GetDimensions`\n*HLSL Buffer Method*\n\nRetrieves the number of elements and byte stride of the buffer.",
+        name: "Append",
+        signature: "void Append(T value)",
+        snippet: "Append($1)",
+        description: "### `AppendStructuredBuffer.Append`\n*HLSL Buffer Method*\n\nAppends a new structure element to the end of the buffer and increments its internal counter.",
+    },
+    MethodInfo {
+        name: "Consume",
+        signature: "T Consume()",
+        snippet: "Consume()",
+        description: "### `ConsumeStructuredBuffer.Consume`\n*HLSL Buffer Method*\n\nConsumes and returns an element from the buffer and decrements its internal counter.",
+    },
+    MethodInfo {
+        name: "IncrementCounter",
+        signature: "uint IncrementCounter()",
+        snippet: "IncrementCounter()",
+        description: "### `RWStructuredBuffer.IncrementCounter`\n*HLSL Buffer Method*\n\nIncrements the hidden atomic counter associated with the UAV and returns the previous value.",
+    },
+    MethodInfo {
+        name: "DecrementCounter",
+        signature: "uint DecrementCounter()",
+        snippet: "DecrementCounter()",
+        description: "### `RWStructuredBuffer.DecrementCounter`\n*HLSL Buffer Method*\n\nDecrements the hidden atomic counter associated with the UAV and returns the new value.",
+    },
+    MethodInfo {
+        name: "Load2",
+        signature: "uint2 Load2(uint byteOffset)",
+        snippet: "Load2($1)",
+        description: "### `ByteAddressBuffer.Load2`\n*HLSL ByteAddressBuffer Method*\n\nLoads two 32-bit unsigned integers (64 bits) starting from the byte offset.",
+    },
+    MethodInfo {
+        name: "Load3",
+        signature: "uint3 Load3(uint byteOffset)",
+        snippet: "Load3($1)",
+        description: "### `ByteAddressBuffer.Load3`\n*HLSL ByteAddressBuffer Method*\n\nLoads three 32-bit unsigned integers (96 bits) starting from the byte offset.",
+    },
+    MethodInfo {
+        name: "Load4",
+        signature: "uint4 Load4(uint byteOffset)",
+        snippet: "Load4($1)",
+        description: "### `ByteAddressBuffer.Load4`\n*HLSL ByteAddressBuffer Method*\n\nLoads four 32-bit unsigned integers (128 bits) starting from the byte offset.",
+    },
+    MethodInfo {
+        name: "Store",
+        signature: "void Store(uint byteOffset, uint value)",
+        snippet: "Store($1, $2)",
+        description: "### `RWByteAddressBuffer.Store`\n*HLSL ByteAddressBuffer Method*\n\nStores a 32-bit unsigned integer into the raw buffer at the specified byte offset.",
+    },
+    MethodInfo {
+        name: "Store2",
+        signature: "void Store2(uint byteOffset, uint2 value)",
+        snippet: "Store2($1, $2)",
+        description: "### `RWByteAddressBuffer.Store2`\n*HLSL ByteAddressBuffer Method*\n\nStores two 32-bit unsigned integers into the raw buffer at the specified byte offset.",
+    },
+    MethodInfo {
+        name: "Store3",
+        signature: "void Store3(uint byteOffset, uint3 value)",
+        snippet: "Store3($1, $2)",
+        description: "### `RWByteAddressBuffer.Store3`\n*HLSL ByteAddressBuffer Method*\n\nStores three 32-bit unsigned integers into the raw buffer at the specified byte offset.",
+    },
+    MethodInfo {
+        name: "Store4",
+        signature: "void Store4(uint byteOffset, uint4 value)",
+        snippet: "Store4($1, $2)",
+        description: "### `RWByteAddressBuffer.Store4`\n*HLSL ByteAddressBuffer Method*\n\nStores four 32-bit unsigned integers into the raw buffer at the specified byte offset.",
+    },
+    MethodInfo {
+        name: "InterlockedAdd",
+        signature: "void InterlockedAdd(uint dest, uint value, out uint original_value)",
+        snippet: "InterlockedAdd($1, $2, $3)",
+        description: "### `RWByteAddressBuffer.InterlockedAdd`\n*HLSL Atomic Method*\n\nPerforms an atomic addition on the specified byte offset location.",
+    },
+    MethodInfo {
+        name: "InterlockedAnd",
+        signature: "void InterlockedAnd(uint dest, uint value, out uint original_value)",
+        snippet: "InterlockedAnd($1, $2, $3)",
+        description: "### `RWByteAddressBuffer.InterlockedAnd`\n*HLSL Atomic Method*\n\nPerforms an atomic bitwise AND on the specified byte offset location.",
+    },
+    MethodInfo {
+        name: "InterlockedCompareExchange",
+        signature: "void InterlockedCompareExchange(uint dest, uint compare_value, uint value, out uint original_value)",
+        snippet: "InterlockedCompareExchange($1, $2, $3, $4)",
+        description: "### `RWByteAddressBuffer.InterlockedCompareExchange`\n*HLSL Atomic Method*\n\nCompares the destination value with a reference value and conditionally stores a new value atomically.",
+    },
+    MethodInfo {
+        name: "InterlockedCompareStore",
+        signature: "void InterlockedCompareStore(uint dest, uint compare_value, uint value)",
+        snippet: "InterlockedCompareStore($1, $2, $3)",
+        description: "### `RWByteAddressBuffer.InterlockedCompareStore`\n*HLSL Atomic Method*\n\nCompares the destination value with a reference value and conditionally stores a new value atomically without returning the original.",
+    },
+    MethodInfo {
+        name: "InterlockedExchange",
+        signature: "void InterlockedExchange(uint dest, uint value, out uint original_value)",
+        snippet: "InterlockedExchange($1, $2, $3)",
+        description: "### `RWByteAddressBuffer.InterlockedExchange`\n*HLSL Atomic Method*\n\nAtomically assigns a value to the destination and returns the original value.",
+    },
+    MethodInfo {
+        name: "InterlockedMax",
+        signature: "void InterlockedMax(uint dest, uint value, out uint original_value)",
+        snippet: "InterlockedMax($1, $2, $3)",
+        description: "### `RWByteAddressBuffer.InterlockedMax`\n*HLSL Atomic Method*\n\nPerforms an atomic maximum comparison and stores the larger value.",
+    },
+    MethodInfo {
+        name: "InterlockedMin",
+        signature: "void InterlockedMin(uint dest, uint value, out uint original_value)",
+        snippet: "InterlockedMin($1, $2, $3)",
+        description: "### `RWByteAddressBuffer.InterlockedMin`\n*HLSL Atomic Method*\n\nPerforms an atomic minimum comparison and stores the smaller value.",
+    },
+    MethodInfo {
+        name: "InterlockedOr",
+        signature: "void InterlockedOr(uint dest, uint value, out uint original_value)",
+        snippet: "InterlockedOr($1, $2, $3)",
+        description: "### `RWByteAddressBuffer.InterlockedOr`\n*HLSL Atomic Method*\n\nPerforms an atomic bitwise OR on the specified byte offset location.",
+    },
+    MethodInfo {
+        name: "InterlockedXor",
+        signature: "void InterlockedXor(uint dest, uint value, out uint original_value)",
+        snippet: "InterlockedXor($1, $2, $3)",
+        description: "### `RWByteAddressBuffer.InterlockedXor`\n*HLSL Atomic Method*\n\nPerforms an atomic bitwise XOR on the specified byte offset location.",
     },
 ];
 

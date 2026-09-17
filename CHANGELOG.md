@@ -1,4 +1,4 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to the **HLSL & ShaderLab Extended** extension will be documented in this file.
 
@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2026-09-17
 
 ### Added
+- **Full Compute Shader & Buffer Support (Pure HLSL & Unity)**:
+  - Registered `.compute` file extension in Zed and added automatic context detection for Unity compute shaders and `#pragma kernel` declarations.
+  - Added `-Wno-misplaced-attributes` and `-Wno-unknown-pragmas` to DXC compiler flags and diagnostic filters, enabling clean real-time validation of `[numthreads(x, y, z)]` without misplaced attribute warnings.
+  - Expanded built-in types: `RWStructuredBuffer`, `StructuredBuffer`, `AppendStructuredBuffer`, `ConsumeStructuredBuffer`, `ByteAddressBuffer`, `RWByteAddressBuffer`, `RWTexture1D`, `RWTexture2D`, `RWTexture3D`, `RWTexture2DArray`, `Texture1D..3D`.
+  - Added full member method completions (`.` operator) for buffers: `Append`, `Consume`, `GetDimensions`, `IncrementCounter`, `DecrementCounter`, `Load`, `Load2..4`, `Store`, `Store2..4`, and full atomic intrinsics (`InterlockedAdd`, `InterlockedCompareExchange`, etc.).
+  - Added member method completions for writable textures (`RWTexture*`): `GetDimensions`, `Load`.
+  - Added `groupshared` keyword and qualifiers to autocompletion and hover documentation.
+  - Complete signature help and hover documentation for barrier intrinsics (`GroupMemoryBarrierWithGroupSync`, `GroupMemoryBarrier`, `DeviceMemoryBarrier`, `AllMemoryBarrier`).
+  - Full autocompletion and hover documentation for compute semantics (`SV_DispatchThreadID`, `SV_GroupID`, `SV_GroupThreadID`, `SV_GroupIndex`).
 - **1:1 Signature Help Parity with GLSL Validator**:
   - Implemented parameter-count-aware signature selection (`select_best_overload`) providing exact overload matching when typing user-defined or built-in functions.
   - Multi-line parameter scanning support for functions spread across several lines.
