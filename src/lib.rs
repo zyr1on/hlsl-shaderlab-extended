@@ -37,9 +37,11 @@ fn resolve_configured_path(configured: Option<String>, worktree: &zed::Worktree)
         return Some(trimmed.to_string());
     }
     if let Some(resolved) = worktree.which(trimmed) {
-        return Some(resolved);
+        if fs::metadata(&resolved).is_ok_and(|s| s.is_file()) {
+            return Some(resolved);
+        }
     }
-    Some(trimmed.to_string())
+    None
 }
 
 /// Recursively searches for a file matching `target_name` in a directory.
@@ -132,8 +134,10 @@ impl HlslShaderlabExtension {
 
         // 1) Check system PATH
         if let Some(path) = worktree.which("dxc").or_else(|| worktree.which("dxc.exe")) {
-            self.cached_dxc = Some(path.clone());
-            return Ok(path);
+            if fs::metadata(&path).is_ok_and(|s| s.is_file()) {
+                self.cached_dxc = Some(path.clone());
+                return Ok(path);
+            }
         }
 
         // 2) Check cached binary
@@ -258,8 +262,10 @@ impl HlslShaderlabExtension {
 
         // 1) Check system PATH
         if let Some(path) = worktree.which(&binary_name).or_else(|| worktree.which("hlsl_validator")) {
-            self.cached_hlsl_validator = Some(path.clone());
-            return Ok(path);
+            if fs::metadata(&path).is_ok_and(|s| s.is_file()) {
+                self.cached_hlsl_validator = Some(path.clone());
+                return Ok(path);
+            }
         }
 
         // 2) Check cached path
