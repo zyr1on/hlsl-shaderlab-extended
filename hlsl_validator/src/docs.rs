@@ -2110,32 +2110,6 @@ pub static SHADERLAB_RENDER_STATES: &[(&str, &str, &str)] = &[
     ("Lighting", "Lighting On", "Enables fixed-function lighting"),
 ];
 
-pub static SHADERLAB_TAGS: &[(&str, &str)] = &[
-    ("\"RenderType\"=\"Opaque\"", "Classifies shader as standard opaque surface for replacement shaders / depth passes"),
-    ("\"RenderType\"=\"Transparent\"", "Classifies shader as transparent for sorting"),
-    ("\"RenderType\"=\"TransparentCutout\"", "Classifies shader as alpha-tested cutout surface"),
-    ("\"Queue\"=\"Geometry\"", "Renders in Geometry queue (2000, standard opaque)"),
-    ("\"Queue\"=\"AlphaTest\"", "Renders in AlphaTest queue (2450, cutout opaque)"),
-    ("\"Queue\"=\"Transparent\"", "Renders in Transparent queue (3000, back-to-front sorted)"),
-    ("\"Queue\"=\"Overlay\"", "Renders in Overlay queue (4000, HUD / lens flares)"),
-    // 2D Sprite & UI Tags
-    ("\"CanUseSpriteAtlas\"=\"True\"", "Enables sprite packing and atlas coordinate UV remapping for 2D SpriteRenderer"),
-    ("\"CanUseSpriteAtlas\"=\"False\"", "Disables sprite atlas packing"),
-    ("\"PreviewType\"=\"Plane\"", "Renders flat 2D plane in Inspector material preview (standard for 2D Sprites and UI)"),
-    ("\"PreviewType\"=\"Skybox\"", "Renders preview as a skybox sphere"),
-    ("\"IgnoreProjector\"=\"True\"", "Ignores 3D projectors (standard for transparent 2D sprites, UI, and particles)"),
-    // Render Pipeline & LightModes (3D & 2D)
-    ("\"RenderPipeline\"=\"UniversalPipeline\"", "Restricts SubShader to Universal Render Pipeline (URP)"),
-    ("\"RenderPipeline\"=\"HighDefinitionPipeline\"", "Restricts SubShader to High Definition Render Pipeline (HDRP)"),
-    ("\"LightMode\"=\"UniversalForward\"", "URP forward main shading pass (3D)"),
-    ("\"LightMode\"=\"UniversalGBuffer\"", "URP deferred GBuffer pass (3D)"),
-    ("\"LightMode\"=\"Universal2D\"", "URP 2D Light pass: evaluates 2D Point, Freeform, Sprite, and Global lights (2D)"),
-    ("\"LightMode\"=\"NormalsRendering\"", "URP 2D Normal Map rendering pass for dynamic 2D lighting (2D)"),
-    ("\"LightMode\"=\"ShadowCaster\"", "Pass responsible for casting shadows into shadow maps"),
-    ("\"LightMode\"=\"DepthOnly\"", "Pass rendering scene depth into _CameraDepthTexture"),
-    ("\"LightMode\"=\"DepthNormals\"", "Pass rendering screen-space normals and depth"),
-    ("\"LightMode\"=\"Meta\"", "Pass evaluated by Unity lightmapper for GI light baking"),
-];
 
 pub static SHADERLAB_ATTRIBUTES: &[(&str, &str, &str)] = &[
     ("MainColor", "MainColor", "Marks property as primary diffuse/base color in Material Inspector and URP/HDRP"),
@@ -2161,12 +2135,18 @@ pub static SHADERLAB_TAG_KEYS_AND_VALUES: &[(&str, &[&str], &str)] = &[
     ("RenderType", &["\"Opaque\"", "\"Transparent\"", "\"TransparentCutout\"", "\"Background\"", "\"Overlay\"", "\"TreeOpaque\"", "\"TreeTransparentCutout\"", "\"TreeSoftSurround\"", "\"Water\"", "\"Grass\""], "Classifies shader for replacement shaders and depth/shadow passes"),
     ("RenderPipeline", &["\"UniversalPipeline\"", "\"HighDefinitionPipeline\""], "Restricts SubShader to a specific Scriptable Render Pipeline"),
     ("Queue", &["\"Geometry\"", "\"Geometry+1\"", "\"AlphaTest\"", "\"Transparent\"", "\"Transparent+1\"", "\"Overlay\"", "\"Background\""], "Determines render sorting order queue"),
-    ("LightMode", &["\"UniversalForward\"", "\"UniversalGBuffer\"", "\"Universal2D\"", "\"NormalsRendering\"", "\"ShadowCaster\"", "\"DepthOnly\"", "\"DepthNormals\"", "\"Meta\"", "\"ForwardBase\"", "\"ForwardAdd\"", "\"Deferred\"", "\"Vertex\"", "\"MotionVectors\""], "Specifies pass role in lighting and pipeline execution"),
+    ("LightMode", &["\"UniversalForward\"", "\"UniversalForwardOnly\"", "\"UniversalGBuffer\"", "\"Universal2D\"", "\"NormalsRendering\"", "\"ShadowCaster\"", "\"DepthOnly\"", "\"DepthNormals\"", "\"Meta\"", "\"SRPDefaultUnlit\"", "\"ForwardBase\"", "\"ForwardAdd\"", "\"Deferred\"", "\"Vertex\"", "\"VertexLM\"", "\"MotionVectors\"", "\"Always\""], "Specifies pass role in lighting and pipeline execution"),
     ("IgnoreProjector", &["\"True\"", "\"False\""], "Whether 3D projectors affect this material (True for 2D sprites/UI)"),
     ("PreviewType", &["\"Plane\"", "\"Skybox\""], "Shape displayed in the material preview Inspector (Plane for 2D/UI)"),
     ("CanUseSpriteAtlas", &["\"True\"", "\"False\""], "Enables UV coordinate packing for 2D sprite atlas rendering"),
     ("DisableBatching", &["\"True\"", "\"False\"", "\"LODFading\""], "Disables draw call dynamic batching if vertex shader modifies positions"),
+    ("ForceNoShadowCasting", &["\"True\"", "\"False\""], "Prevents objects using this shader from casting shadows"),
     ("UniversalMaterialType", &["\"Lit\"", "\"Unlit\""], "URP material classification"),
+    ("PassFlags", &["\"OnlyDirectional\""], "Pass execution flags"),
+    ("RequireOptions", &["\"SoftVegetation\""], "Renders pass only when specified graphics options are enabled"),
+    ("SortingOrder", &["\"FrontToBack\"", "\"BackToFront\""], "Determines pass sorting order for draw calls"),
+    ("PerformanceChecks", &["\"False\""], "Disables shader compiler performance warnings for this pass"),
+    ("ShaderModel", &["\"2.0\"", "\"3.0\"", "\"4.5\"", "\"5.0\""], "Target HLSL shader model requirement"),
 ];
 
 pub static SHADERLAB_COMMON_PROPERTIES: &[(&str, &str, &str)] = &[
@@ -2725,5 +2705,40 @@ pub static ENGINE_VARIABLES: &[EngineVariable] = &[
         engine: "unity",
         detail: "CBUFFER_START(UnityPerDrawRare)",
         description: "### `UnityPerDrawRare`\n*Unity Built-in Constant Buffer*\n\nContains rarely updated draw call state parameters.",
+    },
+    EngineVariable {
+        name: "CBUFFER_START",
+        var_type: "macro",
+        engine: "unity",
+        detail: "CBUFFER_START(name)",
+        description: "### `CBUFFER_START(name)`\n*Unity URP/HDRP Macro*\n\nBegins a constant buffer block declaration. For SRP Batcher compatibility, expose material properties within `CBUFFER_START(UnityPerMaterial) ... CBUFFER_END`.",
+    },
+    EngineVariable {
+        name: "CBUFFER_END",
+        var_type: "macro",
+        engine: "unity",
+        detail: "CBUFFER_END",
+        description: "### `CBUFFER_END`\n*Unity URP/HDRP Macro*\n\nCloses a constant buffer block declaration started with `CBUFFER_START(name)`.",
+    },
+    EngineVariable {
+        name: "TEXTURE2D",
+        var_type: "macro",
+        engine: "unity",
+        detail: "TEXTURE2D(textureName)",
+        description: "### `TEXTURE2D(textureName)`\n*Unity URP/HDRP Texture Macro*\n\nDeclares a 2D texture object separate from its sampler (e.g. `TEXTURE2D(_BaseMap);`).",
+    },
+    EngineVariable {
+        name: "SAMPLER",
+        var_type: "macro",
+        engine: "unity",
+        detail: "SAMPLER(samplerName)",
+        description: "### `SAMPLER(samplerName)`\n*Unity URP/HDRP Sampler Macro*\n\nDeclares a texture sampler state (e.g. `SAMPLER(sampler_BaseMap);`).",
+    },
+    EngineVariable {
+        name: "SAMPLE_TEXTURE2D",
+        var_type: "macro",
+        engine: "unity",
+        detail: "SAMPLE_TEXTURE2D(textureName, samplerName, coord2)",
+        description: "### `SAMPLE_TEXTURE2D(texture, sampler, uv)`\n*Unity URP/HDRP Texture Sampling Macro*\n\nSamples a 2D texture using the specified sampler state and UV coordinates.",
     },
 ];

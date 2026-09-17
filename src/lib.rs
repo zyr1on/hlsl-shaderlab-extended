@@ -392,6 +392,46 @@ impl zed::Extension for HlslShaderlabExtension {
             unknown => Err(format!("Unknown language server: {unknown}")),
         }
     }
+
+    fn language_server_initialization_options(
+        &mut self,
+        language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        let server_name = language_server_id.as_ref();
+        let settings = LspSettings::for_worktree(server_name, worktree)?;
+
+        if server_name == "hlsl_validator" {
+            let mut opts = settings.initialization_options.unwrap_or_else(|| serde_json::json!({}));
+            let is_empty_val = |v: Option<&serde_json::Value>| match v {
+                None | Some(serde_json::Value::Null) => true,
+                Some(serde_json::Value::String(s)) => s.trim().is_empty(),
+                _ => false,
+            };
+            if is_empty_val(opts.get("dxc_path"))
+                && is_empty_val(opts.get("dxcPath"))
+                && let Ok(dxc) = self.find_dxc(language_server_id, worktree)
+            {
+                opts["dxc_path"] = serde_json::Value::String(dxc);
+            }
+            return Ok(Some(opts));
+        }
+
+        if let Some(opts) = settings.initialization_options {
+            return Ok(Some(opts));
+        }
+
+        Ok(None)
+    }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        let settings = LspSettings::for_worktree(language_server_id.as_ref(), worktree)?;
+        Ok(settings.settings)
+    }
 }
 
 zed::register_extension!(HlslShaderlabExtension);

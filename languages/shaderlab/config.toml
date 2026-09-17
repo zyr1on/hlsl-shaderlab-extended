@@ -3,6 +3,7 @@ grammar = "hlsl"
 path_suffixes = [
     "shader", "cginc"
 ]
+first_line_pattern = "^\\s*Shader\\s+\"[^\"]+\""
 line_comments = ["// "]
 block_comment = { start = "/* ", prefix = "* ", end = "*/", tab_size = 1 }
 brackets = [
@@ -11,3 +12,4 @@ brackets = [
     { start = "(", end = ")", close = true, newline = true },
 ]
 language_servers = ["hlsl_validator"]
+

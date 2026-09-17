@@ -80,7 +80,7 @@ You can specify custom binary paths or formatting preferences in your Zed settin
 ## Performance & Architecture
 
 - **LSP Binary Size:** ~985 KB native binary.
-- **WASM Extension:** ~166 KB compiled for `wasm32-wasip1`.
+- **WASM Extension:** Compiled for `wasm32-wasip2` (Zed Extension API 0.7.0+).
 - **Memory Footprint:** < 2 MB RAM usage.
 - **Idle CPU:** 0.0% CPU usage with non-polling event loop.
 - **Speed:** DXC runs with `-O0` to bypass codegen optimization passes for instant diagnostic feedback.

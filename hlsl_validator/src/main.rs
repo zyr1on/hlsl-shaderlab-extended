@@ -11,11 +11,14 @@ use std::env;
 use std::fs;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ShaderContext {
@@ -119,6 +122,9 @@ pub fn is_inside_properties_block(doc: &str, target_line: usize) -> bool {
         if idx == target_line && in_props && props_depth > 0 {
             return true;
         }
+        if idx > target_line {
+            break;
+        }
     }
     false
 }
@@ -131,6 +137,9 @@ pub fn is_inside_tags_block(doc: &str, target_line: usize) -> bool {
         if code_part.is_empty() || code_part.starts_with("/*") {
             if idx == target_line {
                 return in_tags && tags_depth > 0;
+            }
+            if idx > target_line {
+                break;
             }
             continue;
         }
@@ -153,6 +162,9 @@ pub fn is_inside_tags_block(doc: &str, target_line: usize) -> bool {
         }
         if idx == target_line && in_tags && tags_depth > 0 {
             return true;
+        }
+        if idx > target_line {
+            break;
         }
     }
     false
@@ -1228,7 +1240,23 @@ pub fn validate_shaderlab_tags(content: &str) -> Vec<Diagnostic> {
         }
 
         if in_tags {
-            // Check for unclosed quotes
+            // 1. Check for consecutive or empty quotes: `""`
+            let mut search_from = 0;
+            while let Some(pos) = raw_line[search_from..].find("\"\"") {
+                let col = search_from + pos;
+                diagnostics.push(Diagnostic {
+                    range: Range {
+                        start: Position { line: line_idx, character: col },
+                        end: Position { line: line_idx, character: col + 2 },
+                    },
+                    severity: 1, // Error
+                    message: "Syntax error: empty or consecutive quotes '\"\"' in Tags block".to_string(),
+                    source: "shaderlab".to_string(),
+                });
+                search_from = col + 2;
+            }
+
+            // 2. Check for unclosed quotes
             let quote_count = trimmed.chars().filter(|&c| c == '"').count();
             if quote_count % 2 != 0 {
                 let col = raw_line.rfind('"').unwrap_or(0);
@@ -1243,12 +1271,35 @@ pub fn validate_shaderlab_tags(content: &str) -> Vec<Diagnostic> {
                 });
             }
 
-            // Check for missing value after '=' e.g. "RenderType" = } or "RenderType" = \n
-            if trimmed.contains('=') {
-                let mut after_eq = trimmed;
+            // 3. Parse and validate tag entries on this line
+            let mut line_content = raw_line;
+            if let Some(brace_idx) = line_content.find('{') {
+                if line_content[..brace_idx].contains("Tags") {
+                    line_content = &line_content[brace_idx + 1..];
+                }
+            }
+            if let Some(close_idx) = line_content.rfind('}') {
+                line_content = &line_content[..close_idx];
+            }
+
+            if line_content.contains('=') {
+                let mut after_eq = line_content;
                 while let Some(eq_idx) = after_eq.find('=') {
                     let before = after_eq[..eq_idx].trim();
                     let rest = after_eq[eq_idx + 1..].trim();
+
+                    if before.contains('=') {
+                        let col = raw_line.find('=').unwrap_or(0);
+                        diagnostics.push(Diagnostic {
+                            range: Range {
+                                start: Position { line: line_idx, character: col },
+                                end: Position { line: line_idx, character: col + 1 },
+                            },
+                            severity: 1, // Error
+                            message: "Malformed tag entry: unexpected '=' in tag declaration".to_string(),
+                            source: "shaderlab".to_string(),
+                        });
+                    }
 
                     if rest.is_empty() || rest.starts_with('}') {
                         let col = raw_line.rfind('=').unwrap_or(0);
@@ -1257,7 +1308,7 @@ pub fn validate_shaderlab_tags(content: &str) -> Vec<Diagnostic> {
                                 start: Position { line: line_idx, character: col },
                                 end: Position { line: line_idx, character: col + 1 },
                             },
-                            severity: 1,
+                            severity: 1, // Error
                             message: "Missing tag value after '=' in Tags block".to_string(),
                             source: "shaderlab".to_string(),
                         });
@@ -1266,57 +1317,83 @@ pub fn validate_shaderlab_tags(content: &str) -> Vec<Diagnostic> {
                         if let Some(val_end) = stripped.find('"') {
                             let tag_val = &stripped[..val_end];
                             let key = before.rsplit('"').nth(1).unwrap_or(before);
+                            let clean_key = key.trim_matches(|c: char| c == '"' || c == '{' || c == '}' || c.is_whitespace());
 
-                            let col = raw_line.find(tag_val).unwrap_or(0);
-                            for (known_key, valid_vals, _desc) in docs::SHADERLAB_TAG_KEYS_AND_VALUES {
-                                if *known_key == key {
-                                    let matches_exact = valid_vals.iter().any(|v| v.trim_matches('"') == tag_val);
-                                    if !matches_exact {
-                                        if let Some(suggestion) = valid_vals.iter().find(|v| v.trim_matches('"').eq_ignore_ascii_case(tag_val)) {
-                                            let sug_clean = suggestion.trim_matches('"');
-                                            diagnostics.push(Diagnostic {
-                                                range: Range {
-                                                    start: Position { line: line_idx, character: col },
-                                                    end: Position { line: line_idx, character: col + tag_val.len() },
-                                                },
-                                                severity: 2, // Warning
-                                                message: format!("Unknown {key} '{tag_val}'. Did you mean '{sug_clean}'? (Tag values are case-sensitive)"),
-                                                source: "shaderlab".to_string(),
-                                            });
-                                        } else if key == "RenderType" && tag_val == "Opque" {
-                                            diagnostics.push(Diagnostic {
-                                                range: Range {
-                                                    start: Position { line: line_idx, character: col },
-                                                    end: Position { line: line_idx, character: col + tag_val.len() },
-                                                },
-                                                severity: 2,
-                                                message: "Unknown RenderType 'Opque'. Did you mean 'Opaque'?".to_string(),
-                                                source: "shaderlab".to_string(),
-                                            });
-                                        } else if key == "RenderPipeline" && (tag_val == "Universal" || tag_val.eq_ignore_ascii_case("URP")) {
-                                            diagnostics.push(Diagnostic {
-                                                range: Range {
-                                                    start: Position { line: line_idx, character: col },
-                                                    end: Position { line: line_idx, character: col + tag_val.len() },
-                                                },
-                                                severity: 2,
-                                                message: "Unknown RenderPipeline. Did you mean 'UniversalPipeline'?".to_string(),
-                                                source: "shaderlab".to_string(),
-                                            });
-                                        } else if (key == "IgnoreProjector" || key == "CanUseSpriteAtlas") && (tag_val == "true" || tag_val == "false") {
-                                            let sug = if tag_val == "true" { "True" } else { "False" };
-                                            diagnostics.push(Diagnostic {
-                                                range: Range {
-                                                    start: Position { line: line_idx, character: col },
-                                                    end: Position { line: line_idx, character: col + tag_val.len() },
-                                                },
-                                                severity: 2,
-                                                message: format!("Tag '{key}' requires capitalized '{sug}' in ShaderLab."),
-                                                source: "shaderlab".to_string(),
-                                            });
+                            if clean_key.is_empty() {
+                                let col = raw_line.find('=').unwrap_or(0);
+                                diagnostics.push(Diagnostic {
+                                    range: Range {
+                                        start: Position { line: line_idx, character: col.saturating_sub(2) },
+                                        end: Position { line: line_idx, character: col },
+                                    },
+                                    severity: 1, // Error
+                                    message: "Tag key cannot be empty in Tags block".to_string(),
+                                    source: "shaderlab".to_string(),
+                                });
+                            } else {
+                                let is_known_key = docs::SHADERLAB_TAG_KEYS_AND_VALUES.iter().any(|(k, _, _)| k.eq_ignore_ascii_case(clean_key));
+                                let key_col = raw_line.find(clean_key).unwrap_or(0);
+
+                                if !is_known_key {
+                                    let mut sug_msg = String::new();
+                                    if let Some((best_key, _, _)) = docs::SHADERLAB_TAG_KEYS_AND_VALUES.iter().find(|(k, _, _)| {
+                                        k.to_lowercase().starts_with(&clean_key.to_lowercase())
+                                            || clean_key.to_lowercase().starts_with(&k.to_lowercase())
+                                    }) {
+                                        sug_msg = format!(" Did you mean '{best_key}'?");
+                                    }
+                                    diagnostics.push(Diagnostic {
+                                        range: Range {
+                                            start: Position { line: line_idx, character: key_col },
+                                            end: Position { line: line_idx, character: key_col + clean_key.len() },
+                                        },
+                                        severity: 2, // Warning
+                                        message: format!("Unknown Tag key '{clean_key}'.{sug_msg}"),
+                                        source: "shaderlab".to_string(),
+                                    });
+                                } else {
+                                    let col = raw_line.find(tag_val).unwrap_or(0);
+                                    for (known_key, valid_vals, _desc) in docs::SHADERLAB_TAG_KEYS_AND_VALUES {
+                                        if known_key.eq_ignore_ascii_case(clean_key) {
+                                            let matches_exact = valid_vals.iter().any(|v| v.trim_matches('"') == tag_val);
+                                            if !matches_exact {
+                                                if let Some(suggestion) = valid_vals.iter().find(|v| v.trim_matches('"').eq_ignore_ascii_case(tag_val)) {
+                                                    let sug_clean = suggestion.trim_matches('"');
+                                                    diagnostics.push(Diagnostic {
+                                                        range: Range {
+                                                            start: Position { line: line_idx, character: col },
+                                                            end: Position { line: line_idx, character: col + tag_val.len() },
+                                                        },
+                                                        severity: 2, // Warning
+                                                        message: format!("Unknown {clean_key} '{tag_val}'. Did you mean '{sug_clean}'? (Tag values are case-sensitive)"),
+                                                        source: "shaderlab".to_string(),
+                                                    });
+                                                } else if (clean_key == "IgnoreProjector" || clean_key == "CanUseSpriteAtlas" || clean_key == "ForceNoShadowCasting") && (tag_val == "true" || tag_val == "false") {
+                                                    let sug = if tag_val == "true" { "True" } else { "False" };
+                                                    diagnostics.push(Diagnostic {
+                                                        range: Range {
+                                                            start: Position { line: line_idx, character: col },
+                                                            end: Position { line: line_idx, character: col + tag_val.len() },
+                                                        },
+                                                        severity: 2,
+                                                        message: format!("Tag '{clean_key}' requires capitalized '{sug}' in ShaderLab."),
+                                                        source: "shaderlab".to_string(),
+                                                    });
+                                                } else {
+                                                    diagnostics.push(Diagnostic {
+                                                        range: Range {
+                                                            start: Position { line: line_idx, character: col },
+                                                            end: Position { line: line_idx, character: col + tag_val.len() },
+                                                        },
+                                                        severity: 2,
+                                                        message: format!("Unknown {clean_key} value '{tag_val}'."),
+                                                        source: "shaderlab".to_string(),
+                                                    });
+                                                }
+                                            }
+                                            break;
                                         }
                                     }
-                                    break;
                                 }
                             }
                             let next_start = val_end + 2;
@@ -1515,29 +1592,203 @@ pub fn validate_shaderlab_render_states(content: &str) -> Vec<Diagnostic> {
     diagnostics
 }
 
+///// Checks for missing relative #include files that are not found in doc_cache or on disk
+pub fn validate_missing_includes(
+    content: &str,
+    uri: &str,
+    doc_cache: &HashMap<String, String>,
+    workspace_root: Option<&Path>,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let current_dir = uri_to_path(uri).and_then(|p| p.parent().map(|d| d.to_path_buf()));
+
+    for (line_idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("#include") {
+            continue;
+        }
+        let rest = trimmed.strip_prefix("#include").unwrap_or("").trim();
+        if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
+            let inc_path_str = &rest[1..rest.len() - 1];
+            if inc_path_str.starts_with("Packages/")
+                || inc_path_str.starts_with("/Engine/")
+                || inc_path_str.starts_with("Engine/")
+                || inc_path_str.contains("UnityCG.cginc")
+                || inc_path_str.contains("Lighting.cginc")
+                || inc_path_str.contains("AutoLight.cginc")
+                || inc_path_str.contains("TerrainEngine.cginc")
+                || inc_path_str.contains("Core.hlsl")
+                || inc_path_str.contains("Common.ush")
+            {
+                continue;
+            }
+
+            let in_cache = doc_cache.keys().any(|k| {
+                let norm = normalize_uri(k);
+                norm.ends_with(&format!("/{}", inc_path_str))
+                    || norm.ends_with(&format!("\\{}", inc_path_str))
+                    || k.ends_with(inc_path_str)
+            });
+
+            if in_cache {
+                continue;
+            }
+
+            let file_exists = current_dir.as_ref().map(|d| d.join(inc_path_str).exists()).unwrap_or(false)
+                || workspace_root.map(|ws| ws.join(inc_path_str).exists()).unwrap_or(false);
+
+            if !file_exists {
+                let col = line.find(inc_path_str).unwrap_or(0);
+                diagnostics.push(Diagnostic {
+                    range: Range {
+                        start: Position { line: line_idx, character: col },
+                        end: Position { line: line_idx, character: col + inc_path_str.len() },
+                    },
+                    severity: 1,
+                    message: format!("Cannot find include file '{inc_path_str}'."),
+                    source: "hlsl".to_string(),
+                });
+            }
+        }
+    }
+    diagnostics
+}
+
+/// Validates Unity #pragma vertex, #pragma fragment, etc. entry points against user-defined and included functions.
+pub fn validate_shader_pragmas(content: &str, uri: &str, doc_cache: &HashMap<String, String>) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let (all_funcs, _, _) = signature::resolve_includes_and_scan_symbols(uri, content, doc_cache);
+
+    const STAGE_PRAGMAS: &[&str] = &[
+        "vertex", "fragment", "geometry", "hull", "domain", "compute", "kernel", "raytracing"
+    ];
+
+    const KNOWN_UNITY_ENTRY_POINTS: &[&str] = &[
+        "LitPassVertex", "LitPassFragment",
+        "DepthOnlyVertex", "DepthNormalsVertex",
+        "ShadowCasterVertex", "Universal2DVertex", "Universal2DFragment",
+        "UnlitPassVertex", "UnlitPassFragment",
+        "MetaPassVertex", "MetaPassFragment",
+        "SpriteVert", "SpriteFrag",
+    ];
+
+    let has_unresolved_packages = content.lines().any(|l| {
+        let t = l.trim();
+        t.starts_with("#include") && (t.contains("Packages/") || t.contains("UnityCG") || t.contains("Core.hlsl"))
+    });
+
+    for (line_idx, raw_line) in content.lines().enumerate() {
+        let trimmed = raw_line.trim();
+        if !trimmed.starts_with("#pragma ") && !trimmed.starts_with("#pragma\t") {
+            continue;
+        }
+
+        let after_pragma = trimmed.strip_prefix("#pragma").unwrap_or("").trim_start();
+        let mut tokens = after_pragma.split_whitespace();
+        let stage = match tokens.next() {
+            Some(s) => s,
+            None => continue,
+        };
+
+        if !STAGE_PRAGMAS.contains(&stage) {
+            continue;
+        }
+
+        let entry_name = match tokens.next() {
+            Some(e) => e,
+            None => {
+                let col = raw_line.find(stage).unwrap_or(0);
+                diagnostics.push(Diagnostic {
+                    range: Range {
+                        start: Position { line: line_idx, character: col },
+                        end: Position { line: line_idx, character: raw_line.len() },
+                    },
+                    severity: 1,
+                    message: format!("Missing entry point function name for '#pragma {stage}'."),
+                    source: "shaderlab".to_string(),
+                });
+                continue;
+            }
+        };
+
+        // If found in user functions or included functions, all good!
+        if all_funcs.iter().any(|f| f.name == entry_name) {
+            continue;
+        }
+
+        // If it's a known built-in Unity URP/HDRP entry point and we have unresolved packages, allow it
+        if has_unresolved_packages && KNOWN_UNITY_ENTRY_POINTS.contains(&entry_name) {
+            continue;
+        }
+
+        // Entry point not found! Find closest matching function
+        let col = raw_line.find(entry_name).unwrap_or(raw_line.find(stage).unwrap_or(0));
+        let mut suggestion = String::new();
+
+        // 1. Check if there's a function with similar name
+        let similar = all_funcs.iter().find(|f| {
+            f.name.eq_ignore_ascii_case(entry_name)
+                || (f.name.starts_with(entry_name) && f.name.len() <= entry_name.len() + 3)
+                || (entry_name.starts_with(&f.name) && entry_name.len() <= f.name.len() + 3)
+        });
+
+        if let Some(sim) = similar {
+            suggestion = format!(" Did you mean '{}'?", sim.name);
+        } else {
+            // 2. Look for likely candidate based on stage
+            let candidate = match stage {
+                "vertex" => all_funcs.iter().find(|f| f.name.contains("vert") || f.name.contains("Vert") || f.label.contains("SV_POSITION") || f.label.contains("positionCS")),
+                "fragment" => all_funcs.iter().find(|f| f.name.contains("frag") || f.name.contains("Frag") || f.label.contains("SV_Target")),
+                _ => None,
+            };
+            if let Some(c) = candidate {
+                suggestion = format!(" Did you mean '{}'?", c.name);
+            }
+        }
+
+        diagnostics.push(Diagnostic {
+            range: Range {
+                start: Position { line: line_idx, character: col },
+                end: Position { line: line_idx, character: col + entry_name.len() },
+            },
+            severity: 1,
+            message: format!("Entry point function '{entry_name}' declared in '#pragma {stage} {entry_name}' was not found in this shader or included headers.{suggestion}"),
+            source: "shaderlab".to_string(),
+        });
+    }
+
+    diagnostics
+}
+
 pub fn validate_shader(
     uri: &str,
     content: &str,
     dxc_path: &str,
     workspace_root: Option<&Path>,
+    doc_cache: &HashMap<String, String>,
 ) -> Vec<Diagnostic> {
     let context = detect_shader_context(uri, content);
     let mut diagnostics = Vec::new();
     let include_dirs = discover_include_paths(uri, workspace_root);
+
+    diagnostics.extend(validate_missing_includes(content, uri, doc_cache, workspace_root));
 
     match context {
         ShaderContext::UnityShaderLab => {
             diagnostics.extend(validate_shaderlab_properties_and_cbuffer(content));
             diagnostics.extend(validate_shaderlab_tags(content));
             diagnostics.extend(validate_shaderlab_render_states(content));
+            diagnostics.extend(validate_shader_pragmas(content, uri, doc_cache));
 
             // Extract shared HLSLINCLUDE / CGINCLUDE code across passes
             let mut include_lines = Vec::new();
             let mut in_include = false;
-            for line in content.lines() {
+            let mut shared_include_start = 0;
+            for (line_idx, line) in content.lines().enumerate() {
                 let trimmed = line.trim();
                 if trimmed == "HLSLINCLUDE" || trimmed == "CGINCLUDE" {
                     in_include = true;
+                    shared_include_start = line_idx + 1;
                     continue;
                 }
                 if trimmed == "ENDHLSL" || trimmed == "ENDCG" {
@@ -1553,6 +1804,7 @@ pub fn validate_shader(
                 }
             }
             let shared_include = include_lines.join("\n");
+            let shared_include_count = if shared_include.is_empty() { 0 } else { include_lines.len() };
 
             let mut in_block = false;
             let mut block_start_line = 0;
@@ -1573,14 +1825,20 @@ pub fn validate_shader(
                         if !block_code.ends_with('\n') {
                             block_code.push('\n');
                         }
+                        let stubs_count = block_code.lines().count();
                         if !shared_include.is_empty() {
                             block_code.push_str(&shared_include);
                             block_code.push('\n');
                         }
-                        let preamble_line_count = block_code.lines().count();
                         block_code.push_str(&block_lines.join("\n"));
 
-                        let block_diags = run_dxc_on_text(&block_code, dxc_path, block_start_line, &include_dirs, preamble_line_count);
+                        let shared_info = if shared_include_count > 0 {
+                            Some((shared_include_count, shared_include_start))
+                        } else {
+                            None
+                        };
+
+                        let block_diags = run_dxc_on_text(&block_code, dxc_path, block_start_line, &include_dirs, stubs_count, shared_info);
                         diagnostics.extend(block_diags);
                     }
                     continue;
@@ -1596,6 +1854,7 @@ pub fn validate_shader(
             }
         }
         ShaderContext::UnityHlsl => {
+            diagnostics.extend(validate_shader_pragmas(content, uri, doc_cache));
             let mut block_code = String::from(UNITY_COMPAT_PREAMBLE.trim_start());
             if !block_code.ends_with('\n') {
                 block_code.push('\n');
@@ -1608,7 +1867,7 @@ pub fn validate_shader(
                 block_code.push_str(line);
                 block_code.push('\n');
             }
-            diagnostics = run_dxc_on_text(&block_code, dxc_path, 0, &include_dirs, preamble_line_count);
+            diagnostics.extend(run_dxc_on_text(&block_code, dxc_path, 0, &include_dirs, preamble_line_count, None));
         }
         ShaderContext::UnrealEngine => {
             let preamble = if content.contains("FMaterialPixelParameters") {
@@ -1628,10 +1887,10 @@ pub fn validate_shader(
                 block_code.push_str(line);
                 block_code.push('\n');
             }
-            diagnostics = run_dxc_on_text(&block_code, dxc_path, 0, &include_dirs, preamble_line_count);
+            diagnostics = run_dxc_on_text(&block_code, dxc_path, 0, &include_dirs, preamble_line_count, None);
         }
         ShaderContext::PureHlsl => {
-            diagnostics = run_dxc_on_text(content, dxc_path, 0, &include_dirs, 0);
+            diagnostics = run_dxc_on_text(content, dxc_path, 0, &include_dirs, 0, None);
         }
     }
 
@@ -1640,12 +1899,20 @@ pub fn validate_shader(
 
 static TEMP_FILE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+struct TempFileGuard(PathBuf);
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 pub fn run_dxc_on_text(
     content: &str,
     dxc_path: &str,
     line_offset: usize,
     include_dirs: &[PathBuf],
-    preamble_line_count: usize,
+    stubs_line_count: usize,
+    shared_include: Option<(usize, usize)>,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let temp_dir = env::temp_dir();
@@ -1655,8 +1922,11 @@ pub fn run_dxc_on_text(
     if fs::write(&temp_file, content).is_err() {
         return diagnostics;
     }
+    let _guard = TempFileGuard(temp_file.clone());
 
     let mut cmd = Command::new(dxc_path);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     cmd.arg("-T").arg("lib_6_3");
     cmd.arg("-HV").arg("2021");
     cmd.arg("-O0");
@@ -1667,16 +1937,52 @@ pub fn run_dxc_on_text(
 
     cmd.arg(&temp_file);
 
-    let output = cmd.output();
-    let _ = fs::remove_file(&temp_file);
-
-    let output = match output {
-        Ok(out) => out,
+    let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+        Ok(c) => c,
         Err(_) => return diagnostics,
     };
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let stdout_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut p) = stdout_pipe.take() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut p) = stderr_pipe.take() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let start = Instant::now();
+    let mut exited = false;
+    while start.elapsed() < Duration::from_secs(4) {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                exited = true;
+                break;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
+            Err(_) => break,
+        }
+    }
+
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+        return diagnostics;
+    }
+
+    let stdout_bytes = stdout_handle.join().unwrap_or_default();
+    let stderr_bytes = stderr_handle.join().unwrap_or_default();
+    let stderr = String::from_utf8_lossy(&stderr_bytes);
+    let stdout = String::from_utf8_lossy(&stdout_bytes);
     let combined = format!("{stderr}\n{stdout}");
 
     for line in combined.lines() {
@@ -1691,7 +1997,13 @@ pub fn run_dxc_on_text(
         };
 
         if rest.contains("file not found")
-            && (rest.contains("Packages/") || rest.contains("UnityCG") || rest.contains("Engine") || rest.contains(".ush") || rest.contains(".cginc"))
+            && (rest.contains("Packages/")
+                || rest.contains("UnityCG.cginc")
+                || rest.contains("Lighting.cginc")
+                || rest.contains("AutoLight.cginc")
+                || rest.contains("TerrainEngine.cginc")
+                || rest.contains("Engine")
+                || rest.contains(".ush"))
         {
             continue;
         }
@@ -1721,13 +2033,20 @@ pub fn run_dxc_on_text(
         let file_part = parts.next().unwrap_or("");
 
         if let (Ok(parsed_line), Ok(parsed_col)) = (line_str.parse::<usize>(), col_str.parse::<usize>()) {
-            if parsed_line <= preamble_line_count {
-                // Ignore internal preamble errors if any
+            if parsed_line <= stubs_line_count {
+                // Ignore internal preamble stubs errors
                 continue;
             }
 
+            let (shared_count, shared_start) = shared_include.unwrap_or((0, 0));
+            let total_preamble = stubs_line_count + shared_count;
+
             let actual_line = if file_part.contains("hlsl_val_") {
-                (parsed_line - 1).saturating_sub(preamble_line_count) + line_offset
+                if shared_count > 0 && parsed_line <= total_preamble {
+                    (parsed_line - 1).saturating_sub(stubs_line_count) + shared_start
+                } else {
+                    (parsed_line - 1).saturating_sub(total_preamble) + line_offset
+                }
             } else {
                 let inc_name = Path::new(file_part).file_name().and_then(|n| n.to_str()).unwrap_or("");
                 content.lines().enumerate()
@@ -1840,6 +2159,70 @@ pub fn get_document_from_cache<'a>(doc_cache: &'a HashMap<String, String>, uri: 
     None
 }
 
+pub fn extract_word_prefix(prefix: &str) -> (usize, &str) {
+    let mut word_start = prefix.len();
+    for (i, c) in prefix.char_indices().rev() {
+        if c.is_alphanumeric() || c == '_' {
+            word_start = i;
+        } else {
+            break;
+        }
+    }
+    (word_start, &prefix[word_start..])
+}
+
+pub fn check_following_paren(line: &str, safe_col: usize) -> (usize, bool) {
+    let mut word_end = safe_col;
+    for (i, c) in line[safe_col..].char_indices() {
+        if c.is_alphanumeric() || c == '_' {
+            word_end = safe_col + i + c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    let has_paren = line[word_end..].trim_start().starts_with('(');
+    (word_end, has_paren)
+}
+
+#[inline]
+pub fn starts_with_ignore_ascii_case(s: &str, prefix: &str) -> bool {
+    if prefix.len() > s.len() {
+        return false;
+    }
+    s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+}
+
+fn make_completion_item(
+    label: &str,
+    kind: u64,
+    detail: &str,
+    doc: &str,
+    insert: (&str, u64),
+    range: &Value,
+    sort_text: &str,
+) -> Value {
+    let (insert_text, insert_format) = insert;
+    let mut item = json!({
+        "label": label,
+        "kind": kind,
+        "detail": detail,
+        "insertText": insert_text,
+        "insertTextFormat": insert_format,
+        "textEdit": {
+            "range": range,
+            "newText": insert_text
+        },
+        "sortText": sort_text
+    });
+    if !doc.is_empty() {
+        item["documentation"] = json!({
+            "kind": "markdown",
+            "value": doc
+        });
+    }
+    item
+}
+
 fn handle_completion(
     msg: &Value,
     doc_cache: &HashMap<String, String>,
@@ -1870,10 +2253,6 @@ fn handle_completion(
         }
     };
 
-    if signature::is_in_comment_or_string(doc, line_idx, col_idx) {
-        return json!([]);
-    }
-
     let line = match doc.lines().nth(line_idx) {
         Some(l) => l,
         None => return json!([]),
@@ -1881,6 +2260,13 @@ fn handle_completion(
 
     let safe_col = signature::safe_floor_char_boundary(line, col_idx.min(line.len()));
     let prefix = &line[..safe_col];
+
+    let is_tag = line.contains("Tags") || is_inside_tags_block(doc, line_idx);
+    let is_include = prefix.trim_start().starts_with("#include");
+
+    if signature::is_in_comment_or_string(doc, line_idx, col_idx) && !is_tag && !is_include {
+        return json!([]);
+    }
 
     let context = detect_shader_context(uri, doc);
 
@@ -2255,65 +2641,87 @@ fn handle_completion(
                         .unwrap_or(before_eq)
                         .trim_start_matches('{')
                         .trim();
-                    let after_eq_trimmed = after_eq.trim_start();
-                    let already_has_quote = after_eq_trimmed.starts_with('"');
-                    let closing_quote_present = line_after_cursor.trim_start().starts_with('"');
+                    let clean_key = key.trim_matches(|c: char| c == '"' || c == '{' || c == '}' || c.is_whitespace());
+                    // Only suggest values if the key is valid and before_eq does not have consecutive quotes syntax error
+                    if !clean_key.is_empty() && !before_eq.contains("\"\"") {
+                        let after_eq_trimmed = after_eq.trim_start();
+                        let already_has_quote = after_eq_trimmed.starts_with('"');
+                        let closing_quote_present = line_after_cursor.trim_start().starts_with('"');
 
-                    for (tag_key, values, desc) in docs::SHADERLAB_TAG_KEYS_AND_VALUES {
-                        if *tag_key == key {
-                            for (v_idx, val) in values.iter().enumerate() {
-                                let clean_val = val.trim_matches('"');
-                                let insert = if already_has_quote && closing_quote_present {
-                                    clean_val.to_string()
-                                } else if already_has_quote {
-                                    format!("{}\"", clean_val)
-                                } else {
-                                    (*val).to_string()
-                                };
-                                sl_items.push(json!({
-                                    "label": *val,
-                                    "kind": 12,
-                                    "detail": format!("{}: {}", tag_key, desc),
-                                    "insertText": insert,
-                                    "filterText": clean_val,
-                                    "sortText": format!("00_{:02}_{}", v_idx, clean_val),
-                                }));
+                        for (tag_key, values, desc) in docs::SHADERLAB_TAG_KEYS_AND_VALUES {
+                            if tag_key.eq_ignore_ascii_case(clean_key) {
+                                for (v_idx, val) in values.iter().enumerate() {
+                                    let clean_val = val.trim_matches('"');
+                                    let insert = if already_has_quote && closing_quote_present {
+                                        clean_val.to_string()
+                                    } else if already_has_quote {
+                                        format!("{}\"", clean_val)
+                                    } else {
+                                        (*val).to_string()
+                                    };
+                                    sl_items.push(json!({
+                                        "label": *val,
+                                        "kind": 12,
+                                        "detail": format!("{}: {}", tag_key, desc),
+                                        "insertText": insert,
+                                        "filterText": clean_val,
+                                        "sortText": format!("00_{:02}_{}", v_idx, clean_val),
+                                    }));
+                                }
+                                return json!(sl_items);
                             }
-                            return json!(sl_items);
                         }
                     }
                 }
             }
 
-            // Inside Tags block (before '=' or after a completed tag): suggest tag keys with value templates
-            let quote_before_key = prefix.trim_end().ends_with('"');
-            for (idx, (tag_key, values, desc)) in docs::SHADERLAB_TAG_KEYS_AND_VALUES.iter().enumerate() {
-                let default_val = values.first().map(|v| v.trim_matches('"')).unwrap_or("Opaque");
-                let snippet = if quote_before_key {
-                    format!("{}\" = \"${{1:{}}}\"", tag_key, default_val)
+            // Inside Tags block (before '=' or after a completed tag):
+            let clean_prefix_token = prefix.split_whitespace().last().unwrap_or("");
+            let starts_with_quote = clean_prefix_token.starts_with('"') || prefix.trim_end().ends_with('"');
+            let has_closing_quote = line_after_cursor.trim_start().starts_with('"');
+
+            // 1. FIRST: Tag Keys alone (Highest priority, sortText: "00_...")
+            for (idx, (tag_key, _values, desc)) in docs::SHADERLAB_TAG_KEYS_AND_VALUES.iter().enumerate() {
+                let (insert_text, filter_text) = if starts_with_quote && has_closing_quote {
+                    ((*tag_key).to_string(), format!("\"{}\"", tag_key))
+                } else if starts_with_quote {
+                    (format!("{}\"", tag_key), format!("\"{}\"", tag_key))
                 } else {
-                    format!("\"{}\" = \"${{1:{}}}\"", tag_key, default_val)
+                    (format!("\"{}\"", tag_key), (*tag_key).to_string())
                 };
                 sl_items.push(json!({
                     "label": format!("\"{}\"", tag_key),
                     "kind": 10,
                     "detail": format!("Tag: {}", desc),
-                    "insertText": snippet,
-                    "insertTextFormat": 2,
-                    "filterText": *tag_key,
-                    "sortText": format!("01_{:02}_{}", idx, tag_key),
+                    "insertText": insert_text,
+                    "filterText": filter_text,
+                    "sortText": format!("00_{:02}_{}", idx, tag_key),
                 }));
             }
 
-            for (idx, (tag, desc)) in docs::SHADERLAB_TAGS.iter().enumerate() {
-                sl_items.push(json!({
-                    "label": *tag,
-                    "kind": 10,
-                    "detail": *desc,
-                    "insertText": *tag,
-                    "sortText": format!("05_{:02}_{}", idx, tag),
-                }));
+            // 2. SECOND: Complete Tag Template with default value (Lower priority, sortText: "01_...")
+            // Only suggest full snippet if there is NOT already an '=' after cursor on this line!
+            let line_after_has_eq = line_after_cursor.contains('=');
+            if !line_after_has_eq {
+                for (idx, (tag_key, values, desc)) in docs::SHADERLAB_TAG_KEYS_AND_VALUES.iter().enumerate() {
+                    let default_val = values.first().map(|v| v.trim_matches('"')).unwrap_or("Opaque");
+                    let (snippet, filter_text) = if starts_with_quote {
+                        (format!("{}\" = \"${{1:{}}}\"", tag_key, default_val), format!("\"{}\"", tag_key))
+                    } else {
+                        (format!("\"{}\" = \"${{1:{}}}\"", tag_key, default_val), (*tag_key).to_string())
+                    };
+                    sl_items.push(json!({
+                        "label": format!("\"{}\" = \"{}\"", tag_key, default_val),
+                        "kind": 15,
+                        "detail": format!("Snippet: {}", desc),
+                        "insertText": snippet,
+                        "insertTextFormat": 2,
+                        "filterText": filter_text,
+                        "sortText": format!("01_{:02}_{}", idx, tag_key),
+                    }));
+                }
             }
+
             if !sl_items.is_empty() {
                 return json!(sl_items);
             }
@@ -2420,17 +2828,25 @@ fn handle_completion(
                         }
                     }
 
+                    let member_range = json!({
+                        "start": { "line": line_idx, "character": dot_idx + 1 },
+                        "end": { "line": line_idx, "character": safe_col }
+                    });
+
                     if let Some(target_type) = current_type {
                         // Struct fields
                         if let Some(s_def) = structs.iter().find(|s| s.name == target_type) {
                             let field_items: Vec<Value> = s_def.fields.iter().enumerate().map(|(idx, f)| {
-                                json!({
-                                    "label": f.name,
-                                    "kind": 5,
-                                    "detail": format!("{} {}.{}", f.field_type, s_def.name, f.name),
-                                    "insertText": f.name,
-                                    "sortText": format!("00_{:02}_{}", idx, f.name),
-                                })
+                                let sort_text = format!("00_{:02}_{}", idx, f.name);
+                                make_completion_item(
+                                    &f.name,
+                                    5,
+                                    &format!("{} {}.{}", f.field_type, s_def.name, f.name),
+                                    "",
+                                    (&f.name, 1),
+                                    &member_range,
+                                    &sort_text,
+                                )
                             }).collect();
                             return json!(field_items);
                         }
@@ -2438,19 +2854,17 @@ fn handle_completion(
                         // Texture methods
                         if target_type.starts_with("Texture") {
                             let method_items: Vec<Value> = docs::TEXTURE_METHODS.iter().enumerate().map(|(idx, m)| {
-                                json!({
-                                    "label": m.name,
-                                    "kind": 2,
-                                    "detail": m.signature,
-                                    "documentation": { "kind": "markdown", "value": m.description },
-                                    "insertText": m.snippet,
-                                    "insertTextFormat": 2,
-                                    "command": {
-                                        "title": "Trigger Parameter Hints",
-                                        "command": "editor.action.triggerParameterHints"
-                                    },
-                                    "sortText": format!("00_{:02}_{}", idx, m.name),
-                                })
+                                let sort_text = format!("00_{:02}_{}", idx, m.name);
+                                let snip = format!("{}$0", m.snippet);
+                                make_completion_item(
+                                    m.name,
+                                    2,
+                                    m.signature,
+                                    m.description,
+                                    (&snip, 2),
+                                    &member_range,
+                                    &sort_text,
+                                )
                             }).collect();
                             return json!(method_items);
                         }
@@ -2458,19 +2872,17 @@ fn handle_completion(
                         // Buffer methods
                         if target_type.contains("Buffer") {
                             let method_items: Vec<Value> = docs::BUFFER_METHODS.iter().enumerate().map(|(idx, m)| {
-                                json!({
-                                    "label": m.name,
-                                    "kind": 2,
-                                    "detail": m.signature,
-                                    "documentation": { "kind": "markdown", "value": m.description },
-                                    "insertText": m.snippet,
-                                    "insertTextFormat": 2,
-                                    "command": {
-                                        "title": "Trigger Parameter Hints",
-                                        "command": "editor.action.triggerParameterHints"
-                                    },
-                                    "sortText": format!("00_{:02}_{}", idx, m.name),
-                                })
+                                let sort_text = format!("00_{:02}_{}", idx, m.name);
+                                let snip = format!("{}$0", m.snippet);
+                                make_completion_item(
+                                    m.name,
+                                    2,
+                                    m.signature,
+                                    m.description,
+                                    (&snip, 2),
+                                    &member_range,
+                                    &sort_text,
+                                )
                             }).collect();
                             return json!(method_items);
                         }
@@ -2498,13 +2910,16 @@ fn handle_completion(
                             for r in 0..rows {
                                 for c in 0..cols {
                                     let label = format!("_m{r}{c}");
-                                    matrix_items.push(json!({
-                                        "label": label,
-                                        "kind": 5, // Field
-                                        "detail": format!("Matrix element [{r}][{c}] (0-based)"),
-                                        "insertText": label,
-                                        "sortText": format!("00_{:02}_{}", idx, label),
-                                    }));
+                                    let sort_text = format!("00_{:02}_{}", idx, label);
+                                    matrix_items.push(make_completion_item(
+                                        &label,
+                                        5, // Field
+                                        &format!("Matrix element [{r}][{c}] (0-based)"),
+                                        "",
+                                        (&label, 1),
+                                        &member_range,
+                                        &sort_text,
+                                    ));
                                     idx += 1;
                                 }
                             }
@@ -2512,13 +2927,16 @@ fn handle_completion(
                             for r in 1..=rows {
                                 for c in 1..=cols {
                                     let label = format!("_{r}{c}");
-                                    matrix_items.push(json!({
-                                        "label": label,
-                                        "kind": 5, // Field
-                                        "detail": format!("Matrix element [{r}][{c}] (1-based)"),
-                                        "insertText": label,
-                                        "sortText": format!("01_{:02}_{}", idx, label),
-                                    }));
+                                    let sort_text = format!("01_{:02}_{}", idx, label);
+                                    matrix_items.push(make_completion_item(
+                                        &label,
+                                        5, // Field
+                                        &format!("Matrix element [{r}][{c}] (1-based)"),
+                                        "",
+                                        (&label, 1),
+                                        &member_range,
+                                        &sort_text,
+                                    ));
                                     idx += 1;
                                 }
                             }
@@ -2574,13 +2992,16 @@ fn handle_completion(
                             };
 
                             let items: Vec<Value> = swizzles.iter().enumerate().map(|(idx, sw)| {
-                                json!({
-                                    "label": *sw,
-                                    "kind": 10,
-                                    "detail": format!("Swizzle .{sw}"),
-                                    "insertText": *sw,
-                                    "sortText": format!("00_{:02}_{}", idx, sw),
-                                })
+                                let sort_text = format!("00_{:02}_{}", idx, sw);
+                                make_completion_item(
+                                    sw,
+                                    10,
+                                    &format!("Swizzle .{sw}"),
+                                    "",
+                                    (sw, 1),
+                                    &member_range,
+                                    &sort_text,
+                                )
                             }).collect();
                             return json!(items);
                         }
@@ -2595,13 +3016,16 @@ fn handle_completion(
                     const COMMON_SWIZZLES: &[&str] = &["x", "y", "z", "w", "xy", "zw", "xyz", "rgb", "rgba"];
                     for (idx, sw) in COMMON_SWIZZLES.iter().enumerate() {
                         if seen_fields.insert(sw.to_string()) {
-                            fallback_items.push(json!({
-                                "label": *sw,
-                                "kind": 10,
-                                "detail": format!("Swizzle .{sw}"),
-                                "insertText": *sw,
-                                "sortText": format!("00_{:02}_{}", idx, sw),
-                            }));
+                            let sort_text = format!("00_{:02}_{}", idx, sw);
+                            fallback_items.push(make_completion_item(
+                                sw,
+                                10,
+                                &format!("Swizzle .{sw}"),
+                                "",
+                                (sw, 1),
+                                &member_range,
+                                &sort_text,
+                            ));
                         }
                     }
 
@@ -2609,13 +3033,16 @@ fn handle_completion(
                     for s in &structs {
                         for f in &s.fields {
                             if seen_fields.insert(f.name.clone()) {
-                                fallback_items.push(json!({
-                                    "label": f.name,
-                                    "kind": 5,
-                                    "detail": format!("{} (field of {})", f.field_type, s.name),
-                                    "insertText": f.name,
-                                    "sortText": format!("05_{}", f.name),
-                                }));
+                                let sort_text = format!("05_{}", f.name);
+                                fallback_items.push(make_completion_item(
+                                    &f.name,
+                                    5,
+                                    &format!("{} (field of {})", f.field_type, s.name),
+                                    "",
+                                    (&f.name, 1),
+                                    &member_range,
+                                    &sort_text,
+                                ));
                             }
                         }
                     }
@@ -2623,19 +3050,17 @@ fn handle_completion(
                     // 3. Common texture methods
                     for (idx, m) in docs::TEXTURE_METHODS.iter().enumerate() {
                         if seen_fields.insert(m.name.to_string()) {
-                            fallback_items.push(json!({
-                                "label": m.name,
-                                "kind": 2,
-                                "detail": m.signature,
-                                "documentation": { "kind": "markdown", "value": m.description },
-                                "insertText": m.snippet,
-                                "insertTextFormat": 2,
-                                "command": {
-                                    "title": "Trigger Parameter Hints",
-                                    "command": "editor.action.triggerParameterHints"
-                                },
-                                "sortText": format!("10_{:02}_{}", idx, m.name),
-                            }));
+                            let sort_text = format!("10_{:02}_{}", idx, m.name);
+                            let snip = format!("{}$0", m.snippet);
+                            fallback_items.push(make_completion_item(
+                                m.name,
+                                2,
+                                m.signature,
+                                m.description,
+                                (&snip, 2),
+                                &member_range,
+                                &sort_text,
+                            ));
                         }
                     }
 
@@ -2649,19 +3074,33 @@ fn handle_completion(
     if let Some(colon_idx) = prefix.rfind(':') {
         let after_colon = prefix[colon_idx + 1..].trim();
         if !prefix.contains('?') && !prefix.contains(';') && !prefix.contains('{') && after_colon.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            let sem_range = json!({
+                "start": { "line": line_idx, "character": colon_idx + 1 },
+                "end": { "line": line_idx, "character": safe_col }
+            });
             let semantic_items: Vec<Value> = docs::BUILTIN_VARIABLES.iter().enumerate().map(|(idx, (sem, desc))| {
-                json!({
-                    "label": *sem,
-                    "kind": 6,
-                    "detail": "HLSL Semantic",
-                    "documentation": { "kind": "markdown", "value": *desc },
-                    "insertText": *sem,
-                    "sortText": format!("00_{:02}_{}", idx, sem),
-                })
+                let sort_text = format!("00_{:02}_{}", idx, sem);
+                make_completion_item(
+                    sem,
+                    6,
+                    "HLSL Semantic",
+                    desc,
+                    (sem, 1),
+                    &sem_range,
+                    &sort_text,
+                )
             }).collect();
             return json!(semantic_items);
         }
     }
+
+    let (word_start, word) = extract_word_prefix(prefix);
+    let (word_end, following_has_paren) = check_following_paren(line, safe_col);
+
+    let replace_range = json!({
+        "start": { "line": line_idx, "character": word_start },
+        "end": { "line": line_idx, "character": word_end }
+    });
 
     let mut items = Vec::new();
     let mut seen_labels: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -2671,74 +3110,99 @@ fn handle_completion(
     // 0. Parameters & Local Variables of Enclosing Function (Priority: HIGHEST!)
     if let Some(f) = signature::find_enclosing_function(&user_funcs, line_idx) {
         for (idx, p) in f.parsed_params.iter().enumerate() {
-            if seen_labels.insert(p.name.clone()) {
-                items.push(json!({
-                    "label": p.name,
-                    "kind": 6,
-                    "detail": format!("{} {} (parameter)", p.param_type, p.name),
-                    "documentation": format!("Parameter of function `{}`", f.name),
-                    "insertText": p.name,
-                    "sortText": format!("00_{:02}_{}", idx, p.name),
-                }));
+            if (word.is_empty() || starts_with_ignore_ascii_case(&p.name, word))
+                && seen_labels.insert(p.name.clone())
+            {
+                let sort_text = format!("00_{:02}_{}", idx, p.name);
+                items.push(make_completion_item(
+                    &p.name,
+                    6,
+                    &format!("{} {} (parameter)", p.param_type, p.name),
+                    &format!("Parameter of function `{}`", f.name),
+                    (&p.name, 1),
+                    &replace_range,
+                    &sort_text,
+                ));
             }
         }
 
         for (idx, lv) in f.local_vars.iter().filter(|v| v.line <= line_idx).enumerate() {
-            if seen_labels.insert(lv.name.clone()) {
-                items.push(json!({
-                    "label": lv.name,
-                    "kind": 6,
-                    "detail": format!("{} {} (local)", lv.var_type, lv.name),
-                    "documentation": format!("Local variable declared in `{}` at line {}", f.name, lv.line + 1),
-                    "insertText": lv.name,
-                    "sortText": format!("01_{:02}_{}", idx, lv.name),
-                }));
+            if (word.is_empty() || starts_with_ignore_ascii_case(&lv.name, word))
+                && seen_labels.insert(lv.name.clone())
+            {
+                let sort_text = format!("01_{:02}_{}", idx, lv.name);
+                items.push(make_completion_item(
+                    &lv.name,
+                    6,
+                    &format!("{} {} (local)", lv.var_type, lv.name),
+                    &format!("Local variable declared in `{}` at line {}", f.name, lv.line + 1),
+                    (&lv.name, 1),
+                    &replace_range,
+                    &sort_text,
+                ));
             }
         }
     }
 
     // 1. User-defined global variables & cbuffer members
     for (idx, v) in user_vars.iter().enumerate() {
-        if seen_labels.insert(v.name.clone()) {
+        if (word.is_empty() || starts_with_ignore_ascii_case(&v.name, word))
+            && seen_labels.insert(v.name.clone())
+        {
             let detail = if v.qualifier.is_empty() {
                 format!("{} {}", v.var_type, v.name)
             } else {
                 format!("{} {} ({})", v.var_type, v.name, v.qualifier)
             };
-            items.push(json!({
-                "label": v.name,
-                "kind": 6,
-                "detail": detail,
-                "documentation": v.doc.as_deref().unwrap_or("Global variable"),
-                "insertText": v.name,
-                "sortText": format!("10_{:03}_{}", idx, v.name),
-            }));
+            let kind = match v.qualifier.as_str() {
+                "struct" => 22,
+                "const" | "#define" => 21,
+                _ => 6,
+            };
+            let sort_text = format!("10_{:03}_{}", idx, v.name);
+            items.push(make_completion_item(
+                &v.name,
+                kind,
+                &detail,
+                v.doc.as_deref().unwrap_or("Global variable"),
+                (&v.name, 1),
+                &replace_range,
+                &sort_text,
+            ));
         }
     }
 
     // 2. User-defined functions
     for (idx, f) in user_funcs.iter().enumerate() {
-        if seen_labels.insert(f.name.clone()) {
-            items.push(json!({
-                "label": f.name,
-                "kind": 3,
-                "detail": f.label,
-                "documentation": f.doc.as_deref().unwrap_or("User function"),
-                "insertText": format!("{}($1)", f.name),
-                "insertTextFormat": 2,
-                "command": {
-                    "title": "Trigger Parameter Hints",
-                    "command": "editor.action.triggerParameterHints"
-                },
-                "sortText": format!("15_{:03}_{}", idx, f.name),
-            }));
+        if (word.is_empty() || starts_with_ignore_ascii_case(&f.name, word))
+            && seen_labels.insert(f.name.clone())
+        {
+            let (insert_text, insert_format) = if following_has_paren {
+                (f.name.clone(), 1)
+            } else if f.parameters.is_empty() {
+                (format!("{}()$0", f.name), 2)
+            } else {
+                (format!("{}($1)$0", f.name), 2)
+            };
+            let sort_text = format!("15_{:03}_{}", idx, f.name);
+            items.push(make_completion_item(
+                &f.name,
+                3,
+                &f.label,
+                f.doc.as_deref().unwrap_or("User function"),
+                (&insert_text, insert_format),
+                &replace_range,
+                &sort_text,
+            ));
         }
     }
 
     // 3. User structs (Types!)
     let structs = &user_structs;
     for (idx, s) in structs.iter().enumerate() {
-        if seen_labels.insert(s.name.clone()) {
+        if (word.is_empty() || starts_with_ignore_ascii_case(&s.name, word))
+            && seen_labels.insert(s.name.clone())
+        {
             let fields_doc = if s.fields.is_empty() {
                 String::new()
             } else {
@@ -2746,18 +3210,16 @@ fn handle_completion(
                 format!("\n\n### Fields:\n{}", f_list)
             };
             let doc_value = format!("```hlsl\nstruct {}\n```{}", s.name, fields_doc);
-
-            items.push(json!({
-                "label": s.name,
-                "kind": 22, // Struct
-                "detail": format!("struct {}", s.name),
-                "documentation": {
-                    "kind": "markdown",
-                    "value": doc_value
-                },
-                "insertText": s.name,
-                "sortText": format!("20_{:02}_{}", idx, s.name),
-            }));
+            let sort_text = format!("20_{:02}_{}", idx, s.name);
+            items.push(make_completion_item(
+                &s.name,
+                22,
+                &format!("struct {}", s.name),
+                &doc_value,
+                (&s.name, 1),
+                &replace_range,
+                &sort_text,
+            ));
         }
     }
 
@@ -2765,7 +3227,9 @@ fn handle_completion(
     if context == ShaderContext::UnityShaderLab {
         let sl_props = signature::scan_shaderlab_properties(doc);
         for (idx, p) in sl_props.iter().enumerate() {
-            if seen_labels.insert(p.name.clone()) {
+            if (word.is_empty() || starts_with_ignore_ascii_case(&p.name, word))
+                && seen_labels.insert(p.name.clone())
+            {
                 let hlsl_type = match p.prop_type.as_str() {
                     "Float" => "float",
                     "Int" => "int",
@@ -2778,17 +3242,17 @@ fn handle_completion(
                     "Cube" => "TextureCube",
                     _ => "float4",
                 };
-                items.push(json!({
-                    "label": p.name,
-                    "kind": 6, // Variable
-                    "detail": format!("{} {} (from Properties)", hlsl_type, p.name),
-                    "documentation": {
-                        "kind": "markdown",
-                        "value": format!("Material property `{}` (`{}`)\n\nShaderLab Property: `{}`", p.name, p.prop_type, p.display_name)
-                    },
-                    "insertText": p.name,
-                    "sortText": format!("12_{:02}_{}", idx, p.name),
-                }));
+                let sort_text = format!("12_{:02}_{}", idx, p.name);
+                let doc_val = format!("Material property `{}` (`{}`)\n\nShaderLab Property: `{}`", p.name, p.prop_type, p.display_name);
+                items.push(make_completion_item(
+                    &p.name,
+                    6,
+                    &format!("{} {} (from Properties)", hlsl_type, p.name),
+                    &doc_val,
+                    (&p.name, 1),
+                    &replace_range,
+                    &sort_text,
+                ));
             }
         }
     }
@@ -2805,37 +3269,34 @@ fn handle_completion(
             continue;
         }
 
-        if seen_labels.insert(ev.name.to_string()) {
+        if (word.is_empty() || starts_with_ignore_ascii_case(ev.name, word))
+            && seen_labels.insert(ev.name.to_string())
+        {
             let kind = match ev.var_type {
                 "function" => 3, // Function
                 "macro" => 14,   // Keyword / Macro
                 _ => 6,          // Variable
             };
-            let (insert_text, insert_format) = if ev.var_type == "function" || ev.var_type == "macro" {
-                (format!("{}($1)", ev.name), 2)
+            let has_params = (ev.var_type == "function" || ev.var_type == "macro") && ev.detail.contains('(');
+            let (insert_text, insert_format) = if has_params {
+                if following_has_paren {
+                    (ev.name.to_string(), 1)
+                } else {
+                    (format!("{}($1)$0", ev.name), 2)
+                }
             } else {
                 (ev.name.to_string(), 1)
             };
-
-            let mut item = json!({
-                "label": ev.name,
-                "kind": kind,
-                "detail": ev.detail,
-                "documentation": {
-                    "kind": "markdown",
-                    "value": ev.description
-                },
-                "insertText": insert_text,
-                "insertTextFormat": insert_format,
-                "sortText": format!("15_{:02}_{}", idx, ev.name),
-            });
-            if ev.var_type == "function" || ev.var_type == "macro" {
-                item["command"] = json!({
-                    "title": "Trigger Parameter Hints",
-                    "command": "editor.action.triggerParameterHints"
-                });
-            }
-            items.push(item);
+            let sort_text = format!("15_{:02}_{}", idx, ev.name);
+            items.push(make_completion_item(
+                ev.name,
+                kind,
+                ev.detail,
+                ev.description,
+                (&insert_text, insert_format),
+                &replace_range,
+                &sort_text,
+            ));
         }
     }
 
@@ -2854,37 +3315,48 @@ fn handle_completion(
             continue;
         }
 
-        if seen_labels.insert(func.name.to_string()) {
+        if (word.is_empty() || starts_with_ignore_ascii_case(func.name, word))
+            && seen_labels.insert(func.name.to_string())
+        {
             let primary_overload = func.overloads.first().map(|o| o.label).unwrap_or(func.name);
-            items.push(json!({
-                "label": func.name,
-                "kind": 3,
-                "detail": primary_overload,
-                "documentation": {
-                    "kind": "markdown",
-                    "value": func.description
-                },
-                "insertText": format!("{}($1)", func.name),
-                "insertTextFormat": 2,
-                "command": {
-                    "title": "Trigger Parameter Hints",
-                    "command": "editor.action.triggerParameterHints"
-                },
-                "sortText": format!("30_{:03}_{}", idx, func.name),
-            }));
+            let (insert_text, insert_format) = if following_has_paren {
+                (func.name.to_string(), 1)
+            } else {
+                let has_params = func.overloads.iter().any(|o| !o.params.is_empty());
+                if has_params {
+                    (format!("{}($1)$0", func.name), 2)
+                } else {
+                    (format!("{}()$0", func.name), 2)
+                }
+            };
+            let sort_text = format!("30_{:03}_{}", idx, func.name);
+            items.push(make_completion_item(
+                func.name,
+                3,
+                primary_overload,
+                func.description,
+                (&insert_text, insert_format),
+                &replace_range,
+                &sort_text,
+            ));
         }
     }
 
     // 5. Built-in Types
     for (idx, t) in docs::BUILTIN_TYPES.iter().enumerate() {
-        if seen_labels.insert((*t).to_string()) {
-            items.push(json!({
-                "label": *t,
-                "kind": 7,
-                "detail": "HLSL Type",
-                "insertText": *t,
-                "sortText": format!("35_{:03}_{}", idx, t),
-            }));
+        if (word.is_empty() || starts_with_ignore_ascii_case(t, word))
+            && seen_labels.insert((*t).to_string())
+        {
+            let sort_text = format!("35_{:03}_{}", idx, t);
+            items.push(make_completion_item(
+                t,
+                25,
+                "HLSL Type",
+                "",
+                (t, 1),
+                &replace_range,
+                &sort_text,
+            ));
         }
     }
 
@@ -2896,13 +3368,19 @@ fn handle_completion(
         "in", "out", "inout", "packoffset",
     ];
     for (idx, kw) in hlsl_keywords.iter().enumerate() {
-        if seen_labels.insert((*kw).to_string()) {
-            items.push(json!({
-                "label": *kw,
-                "kind": 14,
-                "insertText": *kw,
-                "sortText": format!("40_{:03}_{}", idx, kw),
-            }));
+        if (word.is_empty() || starts_with_ignore_ascii_case(kw, word))
+            && seen_labels.insert((*kw).to_string())
+        {
+            let sort_text = format!("40_{:03}_{}", idx, kw);
+            items.push(make_completion_item(
+                kw,
+                14,
+                "",
+                "",
+                (kw, 1),
+                &replace_range,
+                &sort_text,
+            ));
         }
     }
 
@@ -2924,37 +3402,43 @@ fn handle_completion(
         ("switch", "Switch statement", "switch ($1)\n{\n    case $2:\n        break;\n    default:\n        break;\n}"),
     ];
     for (idx, (label, detail, snip)) in snippets.iter().enumerate() {
-        items.push(json!({
-            "label": *label,
-            "kind": 15,
-            "detail": *detail,
-            "insertText": *snip,
-            "insertTextFormat": 2,
-            "sortText": format!("50_{:02}_{}", idx, label),
-        }));
+        if (word.is_empty() || starts_with_ignore_ascii_case(label, word))
+            && seen_labels.insert((*label).to_string())
+        {
+            let sort_text = format!("50_{:02}_{}", idx, label);
+            items.push(make_completion_item(
+                label,
+                15,
+                detail,
+                "",
+                (snip, 2),
+                &replace_range,
+                &sort_text,
+            ));
+        }
     }
 
     json!(items)
 }
 
-fn write_lsp_response(id: &Value, result: Value) {
+fn send_lsp_message<W: Write>(writer: &mut W, val: &Value) -> io::Result<()> {
+    let payload = serde_json::to_string(val)?;
+    write!(writer, "Content-Length: {}\r\n\r\n{}", payload.len(), payload)?;
+    writer.flush()
+}
+
+fn write_lsp_response(stdout: &Mutex<io::Stdout>, id: &Value, result: Value) {
     let resp = json!({
         "jsonrpc": "2.0",
         "id": id,
         "result": result
     });
-    send_lsp_payload(&resp);
+    if let Ok(mut lock) = stdout.lock() {
+        let _ = send_lsp_message(&mut *lock, &resp);
+    }
 }
 
-fn send_lsp_payload(val: &Value) {
-    let payload = serde_json::to_string(val).unwrap_or_default();
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
-    let _ = write!(handle, "Content-Length: {}\r\n\r\n{}", payload.len(), payload);
-    let _ = handle.flush();
-}
-
-fn send_diagnostics(uri: &str, diags: &[Diagnostic]) {
+fn send_diagnostics(stdout: &Mutex<io::Stdout>, uri: &str, diags: &[Diagnostic]) {
     let notification = json!({
         "jsonrpc": "2.0",
         "method": "textDocument/publishDiagnostics",
@@ -2963,49 +3447,70 @@ fn send_diagnostics(uri: &str, diags: &[Diagnostic]) {
             "diagnostics": diags
         }
     });
-    send_lsp_payload(&notification);
+    if let Ok(mut lock) = stdout.lock() {
+        let _ = send_lsp_message(&mut *lock, &notification);
+    }
+}
+
+fn get_doc_or_read<'a>(cache: &'a HashMap<String, String>, uri: &str, owned: &'a mut String) -> &'a str {
+    if let Some(d) = get_document_from_cache(cache, uri) {
+        d
+    } else {
+        *owned = uri_to_path(uri).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+        owned.as_str()
+    }
 }
 
 fn main() {
     let dxc_path = find_dxc_path();
 
     let (tx, rx): (Sender<ValidationTask>, Receiver<ValidationTask>) = mpsc::channel();
-    let mut doc_cache: HashMap<String, String> = HashMap::new();
-    let workspace_root: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(
+    let doc_cache: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
+    let workspace_root: Arc<RwLock<Option<PathBuf>>> = Arc::new(RwLock::new(
         env::var("WORKSPACE_ROOT").ok().map(PathBuf::from),
     ));
 
+    let stdout_shared = Arc::new(Mutex::new(io::stdout()));
+    let stdout_worker = Arc::clone(&stdout_shared);
+
     let worker_dxc = dxc_path.clone();
     let worker_ws = Arc::clone(&workspace_root);
+    let worker_cache = Arc::clone(&doc_cache);
     thread::spawn(move || {
-        let mut pending_task: Option<ValidationTask> = None;
+        let mut pending_tasks: HashMap<String, (ValidationTask, Instant)> = HashMap::new();
         loop {
             while let Ok(task) = rx.try_recv() {
-                pending_task = Some(task);
+                pending_tasks.insert(task.uri.clone(), (task, Instant::now()));
             }
 
-            if let Some(task) = pending_task.take() {
-                let mut interrupted = false;
-                for _ in 0..12 {
-                    thread::sleep(Duration::from_millis(10));
-                    if let Ok(new_task) = rx.try_recv() {
-                        pending_task = Some(new_task);
-                        interrupted = true;
-                        break;
+            let ready_uris: Vec<String> = pending_tasks
+                .iter()
+                .filter(|(_, (_, time))| time.elapsed() >= Duration::from_millis(120))
+                .map(|(uri, _)| uri.clone())
+                .collect();
+
+            if ready_uris.is_empty() {
+                if pending_tasks.is_empty() {
+                    match rx.recv() {
+                        Ok(task) => {
+                            pending_tasks.insert(task.uri.clone(), (task, Instant::now()));
+                        }
+                        Err(_) => break,
                     }
+                } else {
+                    thread::sleep(Duration::from_millis(20));
                 }
+                continue;
+            }
 
-                if interrupted {
-                    continue;
-                }
-
-                let ws_opt = worker_ws.lock().ok().and_then(|g| g.clone());
-                let diags = validate_shader(&task.uri, &task.content, &worker_dxc, ws_opt.as_deref());
-                send_diagnostics(&task.uri, &diags);
-            } else {
-                match rx.recv() {
-                    Ok(task) => pending_task = Some(task),
-                    Err(_) => break,
+            for uri in ready_uris {
+                if let Some((task, _)) = pending_tasks.remove(&uri) {
+                    let ws_opt = worker_ws.read().ok().and_then(|g| g.clone());
+                    let diags = {
+                        let cache_guard = worker_cache.read().unwrap();
+                        validate_shader(&task.uri, &task.content, &worker_dxc, ws_opt.as_deref(), &cache_guard)
+                    };
+                    send_diagnostics(&stdout_worker, &task.uri, &diags);
                 }
             }
         }
@@ -3069,7 +3574,7 @@ fn main() {
                                     .and_then(uri_to_path)
                             });
                         if let Some(ws) = ws_path {
-                            if let Ok(mut g) = workspace_root.lock() {
+                            if let Ok(mut g) = workspace_root.write() {
                                 *g = Some(ws);
                             }
                         }
@@ -3079,24 +3584,19 @@ fn main() {
                         "capabilities": {
                             "textDocumentSync": 1,
                             "completionProvider": {
-                                "triggerCharacters": [".", ">", ":", "\"", "/"],
-                                "resolveProvider": false
+                                "triggerCharacters": ["."]
                             },
                             "signatureHelpProvider": {
                                 "triggerCharacters": ["(", ","],
-                                "retriggerCharacters": [",", ")", " "]
+                                "retriggerCharacters": [","]
                             },
                             "hoverProvider": true,
                             "definitionProvider": true,
                             "documentSymbolProvider": true,
                             "documentFormattingProvider": true
-                        },
-                        "serverInfo": {
-                            "name": "hlsl_validator",
-                            "version": "0.1.0"
                         }
                     });
-                    write_lsp_response(id, result);
+                    write_lsp_response(&stdout_shared, id, result);
                 }
             }
             "textDocument/didOpen" => {
@@ -3104,7 +3604,9 @@ fn main() {
                     let uri = params["textDocument"]["uri"].as_str().unwrap_or("").to_string();
                     let text = params["textDocument"]["text"].as_str().unwrap_or("").to_string();
 
-                    doc_cache.insert(uri.clone(), text.clone());
+                    if let Ok(mut cache) = doc_cache.write() {
+                        cache.insert(uri.clone(), text.clone());
+                    }
                     let _ = tx.send(ValidationTask { uri, content: text });
                 }
             }
@@ -3114,7 +3616,9 @@ fn main() {
                     if let Some(changes) = params["contentChanges"].as_array() {
                         if let Some(last_change) = changes.last() {
                             let text = last_change["text"].as_str().unwrap_or("").to_string();
-                            doc_cache.insert(uri.clone(), text.clone());
+                            if let Ok(mut cache) = doc_cache.write() {
+                                cache.insert(uri.clone(), text.clone());
+                            }
                             let _ = tx.send(ValidationTask { uri, content: text });
                         }
                     }
@@ -3123,14 +3627,17 @@ fn main() {
             "textDocument/didClose" => {
                 if let Some(params) = msg.get("params") {
                     let uri = params["textDocument"]["uri"].as_str().unwrap_or("");
-                    doc_cache.remove(uri);
-                    send_diagnostics(uri, &[]);
+                    if let Ok(mut cache) = doc_cache.write() {
+                        cache.remove(uri);
+                    }
+                    send_diagnostics(&stdout_shared, uri, &[]);
                 }
             }
             "textDocument/completion" => {
                 if let Some(id) = id {
-                    let res = handle_completion(&msg, &doc_cache);
-                    write_lsp_response(id, res);
+                    let cache_guard = doc_cache.read().unwrap();
+                    let res = handle_completion(&msg, &cache_guard);
+                    write_lsp_response(&stdout_shared, id, res);
                 }
             }
             "textDocument/signatureHelp" => {
@@ -3140,16 +3647,11 @@ fn main() {
                     let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
                     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
 
-                    let owned_doc;
-                    let doc = match get_document_from_cache(&doc_cache, uri) {
-                        Some(d) => d,
-                        None => {
-                            owned_doc = uri_to_path(uri).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
-                            owned_doc.as_str()
-                        }
-                    };
-                    let res = signature::get_signature_help(uri, doc, line, col, &doc_cache);
-                    write_lsp_response(id, res);
+                    let cache_guard = doc_cache.read().unwrap();
+                    let mut owned = String::new();
+                    let doc = get_doc_or_read(&cache_guard, uri, &mut owned);
+                    let res = signature::get_signature_help(uri, doc, line, col, &cache_guard);
+                    write_lsp_response(&stdout_shared, id, res);
                 }
             }
             "textDocument/hover" => {
@@ -3159,38 +3661,29 @@ fn main() {
                     let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
                     let col = params["position"]["character"].as_u64().unwrap_or(0) as usize;
 
-                    let owned_doc;
-                    let doc = match get_document_from_cache(&doc_cache, uri) {
-                        Some(d) => d,
-                        None => {
-                            owned_doc = uri_to_path(uri).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
-                            owned_doc.as_str()
-                        }
-                    };
-                    let res = signature::get_hover_info(uri, doc, line, col, &doc_cache);
-                    write_lsp_response(id, res);
+                    let cache_guard = doc_cache.read().unwrap();
+                    let mut owned = String::new();
+                    let doc = get_doc_or_read(&cache_guard, uri, &mut owned);
+                    let res = signature::get_hover_info(uri, doc, line, col, &cache_guard);
+                    write_lsp_response(&stdout_shared, id, res);
                 }
             }
             "textDocument/definition" => {
                 if let Some(id) = id {
-                    let res = signature::handle_definition(&msg, &doc_cache);
-                    write_lsp_response(id, res);
+                    let cache_guard = doc_cache.read().unwrap();
+                    let res = signature::handle_definition(&msg, &cache_guard);
+                    write_lsp_response(&stdout_shared, id, res);
                 }
             }
             "textDocument/documentSymbol" => {
                 if let Some(id) = id {
                     let params = &msg["params"];
                     let uri = params["textDocument"]["uri"].as_str().unwrap_or("");
-                    let owned_doc;
-                    let doc = match get_document_from_cache(&doc_cache, uri) {
-                        Some(d) => d,
-                        None => {
-                            owned_doc = uri_to_path(uri).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
-                            owned_doc.as_str()
-                        }
-                    };
+                    let cache_guard = doc_cache.read().unwrap();
+                    let mut owned = String::new();
+                    let doc = get_doc_or_read(&cache_guard, uri, &mut owned);
                     let symbols = signature::get_document_symbols(doc);
-                    write_lsp_response(id, symbols);
+                    write_lsp_response(&stdout_shared, id, symbols);
                 }
             }
             "textDocument/formatting" => {
@@ -3201,21 +3694,16 @@ fn main() {
                     let tab_size = options["tabSize"].as_u64().unwrap_or(4) as usize;
                     let insert_spaces = options["insertSpaces"].as_bool().unwrap_or(true);
 
-                    let owned_doc;
-                    let doc = match get_document_from_cache(&doc_cache, uri) {
-                        Some(d) => d,
-                        None => {
-                            owned_doc = uri_to_path(uri).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
-                            owned_doc.as_str()
-                        }
-                    };
+                    let cache_guard = doc_cache.read().unwrap();
+                    let mut owned = String::new();
+                    let doc = get_doc_or_read(&cache_guard, uri, &mut owned);
                     let edits = format_document(doc, tab_size, insert_spaces);
-                    write_lsp_response(id, json!(edits));
+                    write_lsp_response(&stdout_shared, id, json!(edits));
                 }
             }
             "shutdown" => {
                 if let Some(id) = id {
-                    write_lsp_response(id, json!(null));
+                    write_lsp_response(&stdout_shared, id, json!(null));
                 }
             }
             "exit" => {
@@ -3223,7 +3711,7 @@ fn main() {
             }
             _ => {
                 if let Some(id) = id {
-                    write_lsp_response(id, json!(null));
+                    write_lsp_response(&stdout_shared, id, json!(null));
                 }
             }
         }

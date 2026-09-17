@@ -142,6 +142,9 @@ pub fn is_in_comment_or_string(text: &str, target_line: usize, target_col: usize
         }
 
         if c == '\n' {
+            if line_idx == target_line {
+                return in_line_comment || in_block_comment || in_string;
+            }
             in_line_comment = false;
             line_idx += 1;
             col_idx = 0;
@@ -225,9 +228,6 @@ pub fn find_enclosing_call(text: &str, line_idx: usize, col_idx: usize) -> Optio
     }
 
     let bytes = text.as_bytes();
-    if offset < bytes.len() && bytes[offset] == b'(' {
-        offset += 1;
-    }
     let mut depth = 0;
     let mut bracket_depth = 0;
     let mut brace_depth = 0;
@@ -298,6 +298,27 @@ pub fn find_enclosing_call(text: &str, line_idx: usize, col_idx: usize) -> Optio
     let fn_name = trimmed[ident_start..].trim();
     if fn_name.is_empty() || CONTROL_KEYWORDS.contains(&fn_name) {
         return None;
+    }
+
+    // If the token immediately preceding fn_name is a type identifier (e.g. "int test(",
+    // "void myFunc(", "float doMath("), then this is a FUNCTION DECLARATION, NOT a function call!
+    let before_fn = trimmed[..ident_start].trim_end();
+    if !before_fn.is_empty() {
+        let mut prev_token_start = before_fn.len();
+        for (i, c) in before_fn.char_indices().rev() {
+            if c.is_alphanumeric() || c == '_' {
+                prev_token_start = i;
+            } else {
+                break;
+            }
+        }
+        let prev_token = &before_fn[prev_token_start..];
+        if !prev_token.is_empty() && !["return", "else", "do"].contains(&prev_token) {
+            let between_tokens = &before_fn[prev_token_start + prev_token.len()..];
+            if between_tokens.trim().is_empty() {
+                return None;
+            }
+        }
     }
 
     let mut param_index = 0;
@@ -901,7 +922,7 @@ pub fn resolve_includes_and_scan_symbols(
                 if let Some(dir) = &curr_dir {
                     let candidate = dir.join(include_target);
                     let cand_uri = path_to_uri(&candidate);
-                    if doc_cache.contains_key(&cand_uri) {
+                    if crate::get_document_from_cache(doc_cache, &cand_uri).is_some() {
                         found_candidate = Some((candidate, cand_uri));
                     } else if candidate.is_file() {
                         found_candidate = Some((candidate.clone(), cand_uri));
@@ -970,9 +991,8 @@ pub fn resolve_includes_and_scan_symbols(
 
                 if let Some((candidate, inc_uri)) = found_candidate {
                     if visited.insert(inc_uri.clone()) {
-                        let content = doc_cache
-                            .get(&inc_uri)
-                            .cloned()
+                        let content = crate::get_document_from_cache(doc_cache, &inc_uri)
+                            .map(|s| s.to_string())
                             .or_else(|| std::fs::read_to_string(&candidate).ok());
 
                         if let Some(inc_content) = content {
@@ -989,6 +1009,37 @@ pub fn resolve_includes_and_scan_symbols(
     }
 
     (all_functions, all_variables, all_structs)
+}
+
+#[inline]
+pub fn select_best_overload(param_counts: &[usize], active_param: usize) -> (usize, usize) {
+    let mut best_matching_sig = None;
+    let mut best_diff = usize::MAX;
+    let mut max_params = 0;
+    let mut max_params_sig = 0;
+
+    for (idx, &p_count) in param_counts.iter().enumerate() {
+        if p_count > max_params {
+            max_params = p_count;
+            max_params_sig = idx;
+        }
+        if active_param < p_count {
+            let diff = p_count - active_param;
+            if diff < best_diff {
+                best_diff = diff;
+                best_matching_sig = Some(idx);
+            }
+        }
+    }
+
+    let active_sig = best_matching_sig.unwrap_or(max_params_sig);
+    let sig_param_len = param_counts.get(active_sig).copied().unwrap_or(0);
+    let active_p = if sig_param_len > 0 {
+        active_param.min(sig_param_len.saturating_sub(1))
+    } else {
+        0
+    };
+    (active_sig, active_p)
 }
 
 /// Handles textDocument/signatureHelp requests.
@@ -1016,131 +1067,80 @@ pub fn get_signature_help(
 
     // 0. Unity ShaderLab Built-in Property Types (Range)
     if fn_name == "Range" {
+        let active_p = active_param.min(1);
         return json!({
             "signatures": [{
                 "label": "Range(float min, float max)",
-                "parameters": [
-                    { "label": "float min" },
-                    { "label": "float max" }
-                ],
                 "documentation": {
                     "kind": "markdown",
                     "value": "### `Range(min, max)`\n*Unity ShaderLab Property Type*\n\nCreates a floating-point property bounded by an interactive slider between `min` and `max` in the Unity Material Inspector."
-                }
+                },
+                "parameters": [
+                    { "label": "float min" },
+                    { "label": "float max" }
+                ]
             }],
             "activeSignature": 0,
-            "activeParameter": active_param
+            "activeParameter": active_p
         });
     }
 
     let (user_funcs, _, _) = resolve_includes_and_scan_symbols(uri, doc_content, doc_cache);
-    let builtin_doc = docs::find_builtin_function(&fn_name);
-    let norm_uri = crate::normalize_uri(uri);
-
-    // 1. Current Active Document Functions (User's Code - Highest Priority!)
-    let current_file_matches: Vec<&FunctionSignature> = user_funcs
+    let matched_funcs: Vec<&FunctionSignature> = user_funcs
         .iter()
-        .filter(|f| {
-            f.name == fn_name
-                && (f.source.is_none()
-                    || f.file_uri
-                        .as_deref()
-                        .map(crate::normalize_uri)
-                        .as_deref()
-                        == Some(&norm_uri))
-        })
+        .filter(|f| f.name == fn_name)
         .collect();
 
-    if !current_file_matches.is_empty() {
-        let signatures: Vec<Value> = current_file_matches
+    if !matched_funcs.is_empty() {
+        let param_counts: Vec<usize> = matched_funcs.iter().map(|f| f.parameters.len()).collect();
+        let (active_sig, active_p) = select_best_overload(&param_counts, active_param);
+
+        let builtin_doc = docs::find_builtin_function(&fn_name);
+        let signatures: Vec<Value> = matched_funcs
             .iter()
             .map(|f| {
                 let params: Vec<Value> = f.parameters.iter().map(|p| json!({ "label": p })).collect();
-                let doc_val = if let Some(ref d) = f.doc {
-                    d.clone()
-                } else if let Some(bi) = builtin_doc {
-                    bi.description.to_string()
-                } else {
-                    format!("```hlsl\n{}\n```\n*(User-defined function)*", f.label)
+                let doc_val = match (&f.doc, &f.source) {
+                    (Some(d), Some(src)) => format!("**Source:** `{src}`\n\n{d}"),
+                    (Some(d), None) => d.clone(),
+                    (None, Some(src)) => {
+                        if let Some(bi) = builtin_doc {
+                            format!("*(Defined in `{src}`)*\n\n{}", bi.description)
+                        } else {
+                            format!("**Source:** `{src}`")
+                        }
+                    }
+                    (None, None) => {
+                        if let Some(bi) = builtin_doc {
+                            bi.description.to_string()
+                        } else {
+                            format!("User-defined function `{}`", f.name)
+                        }
+                    }
                 };
                 json!({
                     "label": f.label,
-                    "parameters": params,
                     "documentation": {
                         "kind": "markdown",
                         "value": doc_val
-                    }
+                    },
+                    "parameters": params
                 })
             })
             .collect();
 
-        let active_p = if !current_file_matches[0].parameters.is_empty() {
-            active_param.min(current_file_matches[0].parameters.len() - 1)
-        } else {
-            0
-        };
-
         return json!({
             "signatures": signatures,
-            "activeSignature": 0,
+            "activeSignature": active_sig,
             "activeParameter": active_p
         });
     }
 
-    // 2. Included Header Functions (From #include files, enriched with rich docs if available!)
-    let include_matches: Vec<&FunctionSignature> = user_funcs
-        .iter()
-        .filter(|f| {
-            f.name == fn_name
-                && f.source.is_some()
-                && f.file_uri
-                    .as_deref()
-                    .map(crate::normalize_uri)
-                    .as_deref()
-                    != Some(&norm_uri)
-        })
-        .collect();
+    // 2. Built-in HLSL Intrinsics & Engine Helpers (Fallback if not found in code or includes)
+    if let Some(builtin) = docs::find_builtin_function(&fn_name) {
+        let param_counts: Vec<usize> = builtin.overloads.iter().map(|ol| ol.params.len()).collect();
+        let (active_sig, active_p) = select_best_overload(&param_counts, active_param);
 
-    if !include_matches.is_empty() {
-        let signatures: Vec<Value> = include_matches
-            .iter()
-            .map(|f| {
-                let params: Vec<Value> = f.parameters.iter().map(|p| json!({ "label": p })).collect();
-                let src_info = f.source.as_ref().map(|s| format!("*(Defined in `{}`)*\n\n", s)).unwrap_or_default();
-                let doc_val = if let Some(ref d) = f.doc {
-                    format!("{}{}", src_info, d)
-                } else if let Some(bi) = builtin_doc {
-                    format!("{}{}", src_info, bi.description)
-                } else {
-                    format!("```hlsl\n{}\n```\n{}", f.label, src_info)
-                };
-
-                json!({
-                    "label": f.label,
-                    "parameters": params,
-                    "documentation": {
-                        "kind": "markdown",
-                        "value": doc_val
-                    }
-                })
-            })
-            .collect();
-
-        let active_p = if !include_matches[0].parameters.is_empty() {
-            active_param.min(include_matches[0].parameters.len() - 1)
-        } else {
-            0
-        };
-
-        return json!({
-            "signatures": signatures,
-            "activeSignature": 0,
-            "activeParameter": active_p
-        });
-    }
-
-    // 3. Built-in HLSL Intrinsics & Engine Helpers (Fallback if not found in code or includes)
-    if let Some(builtin) = builtin_doc {
         let signatures: Vec<Value> = builtin
             .overloads
             .iter()
@@ -1148,24 +1148,18 @@ pub fn get_signature_help(
                 let params: Vec<Value> = ol.params.iter().map(|p| json!({ "label": *p })).collect();
                 json!({
                     "label": ol.label,
-                    "parameters": params,
                     "documentation": {
                         "kind": "markdown",
                         "value": builtin.description
-                    }
+                    },
+                    "parameters": params
                 })
             })
             .collect();
 
-        let active_p = if !builtin.overloads.is_empty() && !builtin.overloads[0].params.is_empty() {
-            active_param.min(builtin.overloads[0].params.len() - 1)
-        } else {
-            0
-        };
-
         return json!({
             "signatures": signatures,
-            "activeSignature": 0,
+            "activeSignature": active_sig,
             "activeParameter": active_p
         });
     }
@@ -1887,3 +1881,4 @@ pub fn get_document_symbols(text: &str) -> Value {
 
     json!(symbols)
 }
+

@@ -27,3 +27,9 @@ grammars/
 .DS_Store
 Thumbs.db
 
+# Samples and test scripts
+samples/
+test_*.py
+scratch/
+
+
