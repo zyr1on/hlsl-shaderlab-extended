@@ -6,6 +6,18 @@ Powered by a lightweight Rust LSP server (`hlsl_validator`) and the **Microsoft 
 
 ---
 
+> [!TIP]
+> ### 📦 Quick Install without Rust (Pre-compiled `.wasm`)
+> If you do not have Rust installed on your system, you can install the extension in seconds:
+> 1. Download **`zed-hlsl_shaderlab-general-release.zip`** from [Latest Releases](https://github.com/zyr1on/zed-hlsl_shaderlab-extended/releases).
+> 2. Extract the contents into your Zed extensions directory:
+>    - **Windows:** `%LOCALAPPDATA%\Zed\extensions\installed\hlsl-shaderlab-extended\`
+>    - **macOS:** `~/Library/Application Support/Zed/extensions/installed/hlsl-shaderlab-extended/`
+>    - **Linux:** `~/.local/share/zed/extensions/installed/hlsl-shaderlab-extended/`
+> 3. Restart Zed! The extension will load immediately and automatically manage compiler binaries in the background.
+
+---
+
 ## Features
 
 - **Compiler Diagnostics (Microsoft DXC):** Real-time syntax and type checking against DirectX Shader Model 6.3+ (HLSL 2021) with 120ms debounced execution.

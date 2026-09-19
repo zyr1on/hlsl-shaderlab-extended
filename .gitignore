@@ -9,6 +9,7 @@ extension.wasm
 
 # Pre-built local binaries & archives
 bin/
+dist/
 *.zip
 *.tar.gz
 
