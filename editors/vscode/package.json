@@ -1,0 +1,146 @@
+{
+  "name": "vscode-hlsl-shaderlab-extended",
+  "displayName": "HLSL & ShaderLab Extended",
+  "description": "High-performance HLSL and Unity ShaderLab Language Server and syntax support powered by Microsoft DXC.",
+  "version": "0.1.1",
+  "publisher": "zyr1on",
+  "author": {
+    "name": "Semih Ozdemir",
+    "email": "semihozdmirr@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zyr1on/zed-hlsl_shaderlab-extended"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Snippets"
+  ],
+  "keywords": [
+    "hlsl",
+    "shaderlab",
+    "shader",
+    "unity",
+    "unreal",
+    "dxc",
+    "lsp",
+    "language server"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:hlsl",
+    "onLanguage:shaderlab"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "hlsl",
+        "aliases": [
+          "HLSL",
+          "hlsl",
+          "High Level Shading Language"
+        ],
+        "extensions": [
+          ".hlsl",
+          ".hlsli",
+          ".fx",
+          ".usf",
+          ".ush",
+          ".compute"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "shaderlab",
+        "aliases": [
+          "ShaderLab",
+          "shaderlab",
+          "Unity Shader"
+        ],
+        "extensions": [
+          ".shader",
+          ".cginc"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "hlsl",
+        "scopeName": "source.hlsl",
+        "path": "./syntaxes/hlsl.tmLanguage.json"
+      },
+      {
+        "language": "shaderlab",
+        "scopeName": "source.shaderlab",
+        "path": "./syntaxes/shaderlab.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "hlsl",
+        "path": "./snippets/hlsl.json"
+      },
+      {
+        "language": "shaderlab",
+        "path": "./snippets/shaderlab.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "hlsl-extended.restartServer",
+        "title": "HLSL Extended: Restart Language Server",
+        "category": "HLSL"
+      },
+      {
+        "command": "hlsl-extended.downloadServer",
+        "title": "HLSL Extended: Download / Update Language Server Binary",
+        "category": "HLSL"
+      }
+    ],
+    "configuration": {
+      "title": "HLSL & ShaderLab Extended",
+      "properties": {
+        "hlslExtended.validatorPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to the hlsl_validator executable. If empty, PATH or auto-download is used."
+        },
+        "hlslExtended.dxcPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to Microsoft DirectX Shader Compiler (dxc). If empty, PATH or auto-download is used."
+        },
+        "hlslExtended.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the HLSL language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "HLSL",
+  "scopeName": "source.hlsl",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#preprocessor" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#semantics" },
+    { "include": "#constants" },
+    { "include": "#strings" },
+    { "include": "#functions" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.hlsl", "match": "//.*$" },
+        { "name": "comment.block.hlsl", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "preprocessor": {
+      "patterns": [
+        { "name": "meta.preprocessor.hlsl", "match": "^\\s*#\\s*(include|define|undef|if|ifdef|ifndef|elif|else|endif|pragma|line|error)\\b.*$" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.hlsl",
+          "match": "\\b(if|else|for|while|do|switch|case|default|break|continue|return|discard)\\b"
+        },
+        {
+          "name": "storage.modifier.hlsl",
+          "match": "\\b(cbuffer|tbuffer|struct|class|interface|in|out|inout|uniform|static|const|volatile|row_major|column_major|precise|linear|centroid|nointerpolation|noperspective|sample|export|groupshared)\\b"
+        },
+        {
+          "name": "keyword.other.register.hlsl",
+          "match": "\\b(register|packoffset)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.scalar.hlsl",
+          "match": "\\b(void|bool|int|uint|dword|half|float|double|min10float|min16float|min12int|min16int|min16uint)\\b"
+        },
+        {
+          "name": "support.type.vector.hlsl",
+          "match": "\\b(bool[1-4]|int[1-4]|uint[1-4]|half[1-4]|float[1-4]|double[1-4]|vector)\\b"
+        },
+        {
+          "name": "support.type.matrix.hlsl",
+          "match": "\\b(bool[1-4]x[1-4]|int[1-4]x[1-4]|uint[1-4]x[1-4]|half[1-4]x[1-4]|float[1-4]x[1-4]|double[1-4]x[1-4]|matrix)\\b"
+        },
+        {
+          "name": "support.type.object.hlsl",
+          "match": "\\b(Texture1D|Texture1DArray|Texture2D|Texture2DArray|Texture2DMS|Texture2DMSArray|Texture3D|TextureCube|TextureCubeArray|RWTexture1D|RWTexture1DArray|RWTexture2D|RWTexture2DArray|RWTexture3D|SamplerState|SamplerComparisonState|Buffer|RWBuffer|StructuredBuffer|RWStructuredBuffer|ByteAddressBuffer|RWByteAddressBuffer|ConsumeStructuredBuffer|AppendStructuredBuffer|ConstantBuffer|RaytracingAccelerationStructure)\\b"
+        }
+      ]
+    },
+    "semantics": {
+      "patterns": [
+        {
+          "name": "entity.name.tag.semantic.hlsl",
+          "match": ":\\s*\\b(SV_Position|SV_Target[0-7]?|SV_Depth|SV_ClipDistance|SV_CullDistance|SV_VertexID|SV_InstanceID|SV_PrimitiveID|SV_DispatchThreadID|SV_GroupID|SV_GroupIndex|SV_GroupThreadID|POSITION|NORMAL|TANGENT|BINORMAL|TEXCOORD[0-9]?|COLOR[0-9]?)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.hlsl", "match": "\\b(true|false)\\b" },
+        { "name": "constant.numeric.float.hlsl", "match": "\\b[0-9]+\\.[0-9]*([eE][+-]?[0-9]+)?[fFhH]?\\b|\\b\\.[0-9]+([eE][+-]?[0-9]+)?[fFhH]?\\b" },
+        { "name": "constant.numeric.integer.hex.hlsl", "match": "\\b0[xX][0-9a-fA-F]+[uUlL]*\\b" },
+        { "name": "constant.numeric.integer.hlsl", "match": "\\b[0-9]+[uUlL]*\\b" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        { "name": "string.quoted.double.hlsl", "begin": "\"", "end": "\"" }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "support.function.intrinsic.hlsl",
+          "match": "\\b(abort|abs|acos|all|any|asdouble|asfloat|asin|asint|asuint|atan|atan2|ceil|clamp|clip|cos|cosh|countbits|cross|ddx|ddx_coarse|ddx_fine|ddy|ddy_coarse|ddy_fine|degrees|determinant|distance|dot|dst|exp|exp2|f16tof32|f32tof16|faceforward|firstbithigh|firstbitlow|floor|fma|fmod|frac|frexp|fwidth|isfinite|isinf|isnan|ldexp|length|lerp|lit|log|log10|log2|mad|max|min|modf|msad4|mul|noise|normalize|pow|radians|rcp|reflect|refract|reversebits|round|rsqrt|saturate|sign|sin|sincos|sinh|smoothstep|sqrt|step|tan|tanh|transpose|trunc)\\b"
+        }
+      ]
+    }
+  }
+}

@@ -33,4 +33,12 @@ samples/
 test_*.py
 scratch/
 
+# VS Code extension build outputs
+node_modules/
+**/node_modules/
+out/
+**/out/
+*.vsix
+
+
 

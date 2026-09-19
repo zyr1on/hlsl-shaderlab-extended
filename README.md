@@ -1,18 +1,36 @@
-# HLSL & ShaderLab Extended for Zed
+# HLSL & ShaderLab Extended (for Zed & VS Code)
 
-High-performance, zero-bloat language extension and LSP for **HLSL**, **Unity ShaderLab**, and **Unreal Engine Shaders** in the [Zed code editor](https://zed.dev).
+High-performance, zero-bloat language extension and LSP for **HLSL**, **Unity ShaderLab**, and **Unreal Engine Shaders** in the [Zed code editor](https://zed.dev) and [Visual Studio Code](https://code.visualstudio.com/).
 
 Powered by a lightweight Rust LSP server (`hlsl_validator`) and the **Microsoft DirectX Shader Compiler (`dxc`)**.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Zed Extension API](https://img.shields.io/badge/Zed%20Extension%20API-v0.7.0-blue)](https://crates.io/crates/zed_extension_api)
+[![Release](https://img.shields.io/github/v/release/zyr1on/zed-hlsl_shaderlab-extended?color=green)](https://github.com/zyr1on/zed-hlsl_shaderlab-extended/releases)
 
 ---
 
 > [!TIP]
-> ### 📦 Quick Install without Rust (Install Dev Extension)
+> ### 📦 Quick Install: Zed Editor
 > 1. Download **`zed-hlsl_shaderlab-general-release.zip`** from [Latest Releases](https://github.com/zyr1on/zed-hlsl_shaderlab-extended/releases) and extract it anywhere on your computer.
 > 2. Open Zed and open the Extensions panel (`Ctrl+Shift+X` on Windows/Linux, `Cmd+Shift+X` on macOS).
 > 3. Click **"Install Dev Extension"** at the top right and select the extracted folder.
 > 
-> *Done! The extension will load immediately without requiring Rust, Cargo, or any compilation.*
+> *Done! The extension will load immediately without requiring Rust or Cargo.*
+
+> [!TIP]
+> ### 📦 Quick Install: Visual Studio Code
+> 1. Download **`vscode-hlsl_shaderlab-general-release.vsix`** from [Latest Releases](https://github.com/zyr1on/zed-hlsl_shaderlab-extended/releases).
+> 2. In VS Code, open Extensions (`Ctrl+Shift+X` / `Cmd+Shift+X`), click the **`...`** (Views and More Actions) menu at the top of the Extensions panel, and select **"Install from VSIX..."**.
+> 3. Select the downloaded `vscode-hlsl_shaderlab-general-release.vsix` file.
+> 
+> *Done! VS Code will automatically download the language server binary in the background upon opening an HLSL or ShaderLab file.*
+
+> [!TIP]
+> ### Automatic Installation (Zero Setup)
+> **Everything is automatic!** The extension automatically handles its dependencies:
+> 1. **`hlsl_validator`**: Automatically downloaded from GitHub Releases on first launch if not found in `PATH`.
+> 2. **Microsoft DXC**: Automatically downloaded from Microsoft's official releases on Windows and Linux if not found in `PATH`.
 
 ---
 
@@ -57,12 +75,7 @@ Microsoft DirectXShaderCompiler (`dxc`) relies on DirectX and Windows/Linux LLVM
 
 ## Setup & Configuration
 
-### Automatic Installation
-The extension automatically handles its dependencies:
-1. **`hlsl_validator`**: Automatically downloaded from GitHub Releases on first launch if not found in `PATH`.
-2. **Microsoft DXC**: Automatically downloaded from Microsoft's official releases on Windows and Linux if not found in `PATH`.
-
-### Custom Configuration (`settings.json`)
+### Zed Settings (`settings.json`)
 You can specify custom binary paths or formatting preferences in your Zed settings:
 
 ```json
@@ -85,6 +98,16 @@ You can specify custom binary paths or formatting preferences in your Zed settin
 }
 ```
 
+### VS Code Settings (`settings.json`)
+You can customize binary paths in VS Code:
+
+```json
+{
+  "hlsl.validatorPath": "",
+  "hlsl.dxcPath": ""
+}
+```
+
 ---
 
 ## Performance & Architecture
@@ -97,6 +120,55 @@ You can specify custom binary paths or formatting preferences in your Zed settin
 
 ---
 
-## License
+## 🛠️ Building from Source
 
-MIT License. Created by Semih Ozdemir.
+If you want to build and hack on HLSL & ShaderLab Extended locally, you can easily compile all components from source:
+
+### Prerequisites
+- [Rust & Cargo](https://rustup.rs/) (latest stable via `rustup`)
+- [Node.js](https://nodejs.org/) (v18+ with npm, for the VS Code extension)
+- WebAssembly Target for Zed:
+  ```bash
+  rustup target add wasm32-wasip2
+  ```
+
+### 1. Build the Language Server (`hlsl_validator`)
+To compile the standalone Rust LSP engine:
+```bash
+cargo build --release --manifest-path hlsl_validator/Cargo.toml
+```
+The compiled binary will be located at:
+- **Windows:** `target/release/hlsl_validator.exe`
+- **Linux / macOS:** `target/release/hlsl_validator`
+
+### 2. Build the Zed Extension (`.wasm`)
+To compile the WebAssembly extension for Zed Editor:
+```bash
+cargo build --release --target wasm32-wasip2 --manifest-path editors/zed/Cargo.toml
+```
+The compiled `.wasm` binary will be at:
+`target/wasm32-wasip2/release/zed_hlsl_shaderlab.wasm`
+
+### 3. Build the VS Code Extension (`.vsix`)
+To compile and package the VS Code extension:
+```bash
+cd editors/vscode
+npm install
+npm run compile
+npx @vscode/vsce package --no-dependencies
+```
+This produces `vscode-hlsl_shaderlab-general-release.vsix` (under 500 KB, zero bundled binaries).
+
+### 4. Running Tests
+To run all unit and integration tests across the workspace:
+```bash
+cargo test --workspace
+```
+
+---
+
+## Author & License
+
+- **Author:** Semih Özdemir ([@zyr1on](https://github.com/zyr1on)) - `semihozdmirr@gmail.com`
+- **License:** [MIT License](LICENSE)
+

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ShaderLab",
+  "scopeName": "source.shaderlab",
+  "patterns": [
+    { "name": "comment.line.double-slash.shaderlab", "match": "//.*$" },
+    { "name": "comment.block.shaderlab", "begin": "/\\*", "end": "\\*/" },
+    {
+      "name": "meta.embedded.hlsl",
+      "begin": "\\b(HLSLPROGRAM|CGPROGRAM|HLSLINCLUDE)\\b",
+      "beginCaptures": { "1": { "name": "keyword.other.hlsl-block.shaderlab" } },
+      "end": "\\b(ENDHLSL|ENDCG)\\b",
+      "endCaptures": { "1": { "name": "keyword.other.hlsl-block.shaderlab" } },
+      "patterns": [
+        { "include": "source.hlsl" }
+      ]
+    },
+    {
+      "name": "keyword.other.shaderlab",
+      "match": "\\b(Shader|Properties|SubShader|Pass|Tags|LOD|Cull|ZWrite|ZTest|Blend|BlendOp|ColorMask|Offset|Stencil|Name)\\b"
+    },
+    {
+      "name": "support.constant.property-type.shaderlab",
+      "match": "\\b(Range|Float|Int|Color|Vector|2D|3D|Cube|2DArray)\\b"
+    },
+    {
+      "name": "support.constant.render-state.shaderlab",
+      "match": "\\b(Back|Front|Off|On|Less|Greater|LEqual|GEqual|Equal|NotEqual|Always|Never|One|Zero|SrcColor|SrcAlpha|DstColor|DstAlpha|OneMinusSrcColor|OneMinusSrcAlpha|OneMinusDstColor|OneMinusDstAlpha)\\b"
+    },
+    {
+      "name": "string.quoted.double.shaderlab",
+      "begin": "\"",
+      "end": "\""
+    },
+    {
+      "name": "constant.numeric.shaderlab",
+      "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+    }
+  ]
+}
