@@ -7,14 +7,12 @@ Powered by a lightweight Rust LSP server (`hlsl_validator`) and the **Microsoft 
 ---
 
 > [!TIP]
-> ### 📦 Quick Install without Rust (Pre-compiled `.wasm`)
-> If you do not have Rust installed on your system, you can install the extension in seconds:
-> 1. Download **`zed-hlsl_shaderlab-general-release.zip`** from [Latest Releases](https://github.com/zyr1on/zed-hlsl_shaderlab-extended/releases).
-> 2. Extract the contents into your Zed extensions directory:
->    - **Windows:** `%LOCALAPPDATA%\Zed\extensions\installed\hlsl-shaderlab-extended\`
->    - **macOS:** `~/Library/Application Support/Zed/extensions/installed/hlsl-shaderlab-extended/`
->    - **Linux:** `~/.local/share/zed/extensions/installed/hlsl-shaderlab-extended/`
-> 3. Restart Zed! The extension will load immediately and automatically manage compiler binaries in the background.
+> ### 📦 Quick Install without Rust (Install Dev Extension)
+> 1. Download **`zed-hlsl_shaderlab-general-release.zip`** from [Latest Releases](https://github.com/zyr1on/zed-hlsl_shaderlab-extended/releases) and extract it anywhere on your computer.
+> 2. Open Zed and open the Extensions panel (`Ctrl+Shift+X` on Windows/Linux, `Cmd+Shift+X` on macOS).
+> 3. Click **"Install Dev Extension"** at the top right and select the extracted folder.
+> 
+> *Done! The extension will load immediately without requiring Rust, Cargo, or any compilation.*
 
 ---
 
