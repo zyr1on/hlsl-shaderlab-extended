@@ -41,12 +41,20 @@ jobs:
       - name: Package Windows
         if: runner.os == 'Windows'
         run: |
-          Compress-Archive -Path "hlsl_validator/target/${{ matrix.target }}/release/${{ matrix.bin_name }}" -DestinationPath "${{ matrix.asset_name }}"
+          $binPath = "target/${{ matrix.target }}/release/${{ matrix.bin_name }}"
+          if (-not (Test-Path $binPath)) {
+            $binPath = "hlsl_validator/target/${{ matrix.target }}/release/${{ matrix.bin_name }}"
+          }
+          Compress-Archive -Path $binPath -DestinationPath "${{ matrix.asset_name }}"
 
       - name: Package Unix
         if: runner.os != 'Windows'
         run: |
-          tar -czf "${{ matrix.asset_name }}" -C "hlsl_validator/target/${{ matrix.target }}/release" "${{ matrix.bin_name }}"
+          BIN_DIR="target/${{ matrix.target }}/release"
+          if [ ! -d "$BIN_DIR" ]; then
+            BIN_DIR="hlsl_validator/target/${{ matrix.target }}/release"
+          fi
+          tar -czf "${{ matrix.asset_name }}" -C "$BIN_DIR" "${{ matrix.bin_name }}"
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2

@@ -1,7 +1,7 @@
 id = "hlsl-shaderlab-extended"
 name = "HLSL & ShaderLab Extended"
 description = "High-performance HLSL and Unity ShaderLab LSP for Zed: syntax diagnostics via Microsoft DXC, smart autocomplete, signature help, hover docs, and goto definition."
-version = "0.1.2"
+version = "0.1.3"
 schema_version = 1
 authors = ["Semih Ozdemir <semihozdmirr@gmail.com>"]
 repository = "https://github.com/zyr1on/hlsl-shaderlab-extended"

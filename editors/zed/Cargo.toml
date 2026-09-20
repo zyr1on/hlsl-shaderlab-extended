@@ -1,6 +1,6 @@
 [package]
 name = "zed-hlsl-shaderlab"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 authors = ["Semih Ozdemir <semihozdmirr@gmail.com>"]
 description = "Zed HLSL & ShaderLab Extended: High-performance HLSL and Unity ShaderLab Language Server powered by Microsoft DXC"
