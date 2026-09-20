@@ -40,6 +40,18 @@ export async function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    context.subscriptions.push(
+        vscode.commands.registerCommand('hlsl-extended.downloadDxc', async () => {
+            try {
+                await downloadDxc(context, outputChannel);
+                vscode.window.showInformationMessage('DirectX Shader Compiler (DXC) downloaded successfully.');
+                vscode.commands.executeCommand('hlsl-extended.restartServer');
+            } catch (err: any) {
+                vscode.window.showErrorMessage(`Failed to download DXC: ${err?.message || err}`);
+            }
+        })
+    );
+
     await startLanguageServer(context, outputChannel);
 }
 
@@ -59,7 +71,10 @@ async function startLanguageServer(context: vscode.ExtensionContext, outputChann
         }
 
         const config = vscode.workspace.getConfiguration('hlslExtended');
-        const dxcPath = config.get<string>('dxcPath')?.trim() || resolveDxc(outputChannel);
+        const configuredDxc = config.get<string>('dxcPath')?.trim();
+        const dxcPath = (configuredDxc && fs.existsSync(configuredDxc))
+            ? configuredDxc
+            : await resolveDxc(context, outputChannel);
 
         outputChannel.appendLine(`[HLSL Extended] Using hlsl_validator: ${validatorPath}`);
         if (dxcPath) {
@@ -163,14 +178,46 @@ async function resolveHlslValidator(
     return await downloadHlslValidator(context, outputChannel, false);
 }
 
-function resolveDxc(outputChannel: vscode.OutputChannel): string | undefined {
+function findFileRecursive(dir: string, targetName: string): string | undefined {
+    if (!fs.existsSync(dir)) return undefined;
+    try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isFile()) {
+                if (entry.name.toLowerCase() === targetName.toLowerCase()) {
+                    return fullPath;
+                }
+            } else if (entry.isDirectory()) {
+                const found = findFileRecursive(fullPath, targetName);
+                if (found) return found;
+            }
+        }
+    } catch {
+        // ignore inaccessible directories
+    }
+    return undefined;
+}
+
+async function resolveDxc(
+    context: vscode.ExtensionContext,
+    outputChannel: vscode.OutputChannel
+): Promise<string | undefined> {
+    // 1. User setting
+    const config = vscode.workspace.getConfiguration('hlslExtended');
+    const configured = config.get<string>('dxcPath')?.trim();
+    if (configured && fs.existsSync(configured) && fs.statSync(configured).isFile()) {
+        return configured;
+    }
+
+    // 2. PATH
     const exe = process.platform === 'win32' ? '.exe' : '';
     const inPath = findInPath(`dxc${exe}`);
     if (inPath) {
         return inPath;
     }
 
-    // Windows standard locations (Windows SDK)
+    // 3. Windows standard locations (Windows SDK)
     if (process.platform === 'win32') {
         const sdkDirs = [
             'C:\\Program Files (x86)\\Windows Kits\\10\\bin',
@@ -191,7 +238,123 @@ function resolveDxc(outputChannel: vscode.OutputChannel): string | undefined {
         }
     }
 
-    return undefined;
+    // 4. Check local extension storage (cached download)
+    const storageDir = context.globalStorageUri.fsPath;
+    const dxcDir = path.join(storageDir, 'dxc');
+    const exeName = `dxc${exe}`;
+
+    const cached1 = findFileRecursive(dxcDir, exeName);
+    if (cached1 && fs.existsSync(cached1) && fs.statSync(cached1).isFile()) {
+        return cached1;
+    }
+    const cached2 = findFileRecursive(storageDir, exeName);
+    if (cached2 && fs.existsSync(cached2) && fs.statSync(cached2).isFile()) {
+        return cached2;
+    }
+
+    // 5. Download from microsoft/DirectXShaderCompiler GitHub Releases (Windows & Linux only)
+    if (process.platform === 'darwin') {
+        outputChannel.appendLine('[HLSL Extended] Microsoft DXC does not distribute official macOS binaries.');
+        return undefined;
+    }
+
+    try {
+        return await downloadDxc(context, outputChannel);
+    } catch (err: any) {
+        outputChannel.appendLine(`[HLSL Extended] Auto-download of DXC failed: ${err?.message || err}`);
+        return undefined;
+    }
+}
+
+async function downloadDxc(
+    context: vscode.ExtensionContext,
+    outputChannel: vscode.OutputChannel
+): Promise<string> {
+    const storageDir = context.globalStorageUri.fsPath;
+    const dxcDir = path.join(storageDir, 'dxc');
+    if (!fs.existsSync(dxcDir)) {
+        fs.mkdirSync(dxcDir, { recursive: true });
+    }
+
+    const platform = process.platform;
+    const arch = process.arch;
+
+    return await vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: 'HLSL Extended: Downloading DirectX Shader Compiler (DXC)',
+            cancellable: false
+        },
+        async (progress) => {
+            progress.report({ message: 'Checking Microsoft DXC releases...' });
+            outputChannel.appendLine('[HLSL Extended] Fetching latest DXC release from GitHub...');
+
+            const releaseUrl = 'https://api.github.com/repos/microsoft/DirectXShaderCompiler/releases/latest';
+            const releaseData = await httpGetJson(releaseUrl);
+
+            const isWindows = platform === 'win32';
+            const asset = releaseData.assets?.find((a: any) => {
+                const name = a.name || '';
+                if (name.includes('pdb')) return false;
+                if (isWindows) {
+                    return name.startsWith('dxc_') && name.endsWith('.zip');
+                } else if (platform === 'linux') {
+                    return name.startsWith('linux_dxc_') && (name.endsWith('.tar.gz') || name.endsWith('.tgz'));
+                }
+                return false;
+            });
+
+            if (!asset || !asset.browser_download_url) {
+                throw new Error(`No compatible DXC release asset found for ${platform}-${arch} in release ${releaseData.tag_name || 'latest'}`);
+            }
+
+            const downloadUrl = asset.browser_download_url;
+            const archivePath = path.join(storageDir, asset.name);
+
+            progress.report({ message: `Downloading ${asset.name}...` });
+            outputChannel.appendLine(`[HLSL Extended] Downloading ${downloadUrl} to ${archivePath}`);
+            await downloadFile(downloadUrl, archivePath);
+
+            progress.report({ message: 'Extracting DXC compiler...' });
+            outputChannel.appendLine(`[HLSL Extended] Extracting ${archivePath} to ${dxcDir}`);
+            extractArchive(archivePath, dxcDir);
+
+            // Clean up archive
+            try { fs.unlinkSync(archivePath); } catch {}
+
+            const exe = isWindows ? '.exe' : '';
+            const exeName = `dxc${exe}`;
+
+            let targetPath: string | undefined;
+            if (isWindows) {
+                const archFolder = arch === 'arm64' ? 'arm64' : 'x64';
+                const preferred = path.join(dxcDir, 'bin', archFolder, exeName);
+                if (fs.existsSync(preferred) && fs.statSync(preferred).isFile()) {
+                    targetPath = preferred;
+                }
+            } else {
+                const preferred = path.join(dxcDir, 'bin', exeName);
+                if (fs.existsSync(preferred) && fs.statSync(preferred).isFile()) {
+                    targetPath = preferred;
+                }
+            }
+
+            if (!targetPath) {
+                targetPath = findFileRecursive(dxcDir, exeName);
+            }
+
+            if (!targetPath) {
+                throw new Error(`Extracted DXC executable not found in ${dxcDir}`);
+            }
+
+            if (!isWindows) {
+                fs.chmodSync(targetPath, 0o755);
+            }
+
+            outputChannel.appendLine(`[HLSL Extended] DXC installed successfully at ${targetPath}`);
+            return targetPath;
+        }
+    );
 }
 
 function findInPath(name: string): string | undefined {

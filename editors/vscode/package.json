@@ -101,6 +101,11 @@
         "command": "hlsl-extended.downloadServer",
         "title": "HLSL Extended: Download / Update Language Server Binary",
         "category": "HLSL"
+      },
+      {
+        "command": "hlsl-extended.downloadDxc",
+        "title": "HLSL Extended: Download / Update DirectX Shader Compiler (DXC)",
+        "category": "HLSL"
       }
     ],
     "configuration": {
