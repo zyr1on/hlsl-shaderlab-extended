@@ -100,6 +100,8 @@ async function startLanguageServer(context: vscode.ExtensionContext, outputChann
             }
         };
 
+        const targetEngine = config.get<string>('targetEngine', 'auto');
+
         const clientOptions: LanguageClientOptions = {
             documentSelector: [
                 { scheme: 'file', language: 'hlsl' },
@@ -109,7 +111,8 @@ async function startLanguageServer(context: vscode.ExtensionContext, outputChann
                 fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{hlsl,hlsli,fx,usf,ush,compute,shader,cginc}')
             },
             initializationOptions: {
-                dxc_path: dxcPath
+                dxc_path: dxcPath,
+                target_engine: targetEngine
             },
             outputChannel
         };

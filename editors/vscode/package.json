@@ -121,6 +121,18 @@
           "default": "",
           "description": "Custom path to Microsoft DirectX Shader Compiler (dxc). If empty, PATH or auto-download is used."
         },
+        "hlslExtended.targetEngine": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "unity",
+            "unreal",
+            "pure",
+            "shaderlab"
+          ],
+          "default": "auto",
+          "description": "Default engine context for HLSL validation and completions: 'auto' (detect from file/path), 'unity' (Unity URP/HDRP), 'unreal' (Unreal Engine USF/USH), 'pure' (DirectX 11/12), or 'shaderlab' (Unity ShaderLab)."
+        },
         "hlslExtended.trace.server": {
           "type": "string",
           "enum": [

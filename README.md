@@ -107,6 +107,7 @@ To configure HLSL & ShaderLab settings in Zed, open your `settings.json` (`Ctrl+
         "path": ""                          // Custom path to hlsl_validator binary (empty for auto-download / PATH)
       },
       "initialization_options": {
+        "target_engine": "auto",            // Target context: "auto" (detect from file/path), "unity", "unreal", "pure", or "shaderlab"
         "dxc_path": "",                     // Custom path to Microsoft DXC dxc.exe / dxc (empty for auto-download / PATH)
         "hlsl_validator_path": ""           // Alternative custom path to hlsl_validator
       }
@@ -129,11 +130,30 @@ To configure HLSL & ShaderLab settings in VS Code, open your User or Workspace `
     "editor.tabSize": 4,                    // Indentation space width (e.g., 2, 4, 8)
     "editor.formatOnSave": true             // Auto-format ShaderLab document on save (true | false)
   },
+  "hlslExtended.targetEngine": "auto",       // Target context: "auto" (detect from file/path), "unity", "unreal", "pure", or "shaderlab"
   "hlslExtended.validatorPath": "",          // Custom executable path to hlsl_validator (empty for auto-download / PATH)
   "hlslExtended.dxcPath": "",                // Custom executable path to Microsoft DXC dxc.exe / dxc (empty for auto-download / PATH)
   "hlslExtended.trace.server": "off"         // Trace LSP communication in Output panel ("off" | "messages" | "verbose")
 }
 ```
+
+---
+
+### Per-File Inline Directives
+
+Just like in GLSL Extended (`// @target: vulkan`), you can override the target engine context directly on a per-file basis by adding a directive at the top of your shader file:
+
+```hlsl
+// @target: unity
+// @target: unreal
+// @target: pure
+// @target: shaderlab
+```
+
+- `// @target: unity` (or `// @engine: unity`) - Force Unity context: enables Unity URP/HDRP built-ins (`_Time`, `unity_ObjectToWorld`, `TransformObjectToHClip`), and automatic Unity compatibility preambles for DXC.
+- `// @target: unreal` (or `// @engine: unreal`) - Force Unreal Engine context: enables Unreal USF/USH built-ins (`FMaterialPixelParameters`, `ResolvedView`), and automatic Unreal compatibility preambles for DXC.
+- `// @target: pure` (or `// @target: hlsl`) - Force pure DirectX 11/12 HLSL: keeps completions and validation strictly free of engine pollution.
+- `// @target: shaderlab` - Force Unity ShaderLab context.
 
 ---
 

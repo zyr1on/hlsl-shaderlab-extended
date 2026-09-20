@@ -28,7 +28,33 @@ pub enum ShaderContext {
     UnrealEngine,
 }
 
+static DEFAULT_CONTEXT: RwLock<Option<ShaderContext>> = RwLock::new(None);
+
+pub fn parse_target_engine(s: &str) -> Option<ShaderContext> {
+    match s.trim().to_lowercase().as_str() {
+        "unity" | "unityhlsl" | "unity_hlsl" => Some(ShaderContext::UnityHlsl),
+        "unreal" | "unrealengine" | "ue" | "ue5" | "ue4" => Some(ShaderContext::UnrealEngine),
+        "pure" | "hlsl" | "purehlsl" | "directx" | "dx12" | "dx11" => Some(ShaderContext::PureHlsl),
+        "shaderlab" | "shader" => Some(ShaderContext::UnityShaderLab),
+        _ => None, // "auto" or default
+    }
+}
+
 pub fn detect_shader_context(uri: &str, content: &str) -> ShaderContext {
+    // 0. Check per-file inline directive at the top of the file (e.g. // @target: unity | unreal | pure | shaderlab)
+    for line in content.lines().take(20) {
+        let t = line.trim();
+        if let Some(directive) = t.strip_prefix("//") {
+            let d = directive.trim().to_lowercase();
+            if d.starts_with("@target:") || d.starts_with("@engine:") || d.starts_with("@context:") {
+                let val = d.split(':').nth(1).unwrap_or("").trim();
+                if let Some(ctx) = parse_target_engine(val) {
+                    return ctx;
+                }
+            }
+        }
+    }
+
     // 1. Unity ShaderLab: .shader extension or top-level non-commented Shader keyword
     let is_shaderlab = uri.ends_with(".shader") || content.lines().any(|l| {
         let t = l.trim();
@@ -89,7 +115,13 @@ pub fn detect_shader_context(uri: &str, content: &str) -> ShaderContext {
         return ShaderContext::UnityHlsl;
     }
 
-    // 4. Default: Pure HLSL (DirectX 11/12, DXC compute/graphics shaders)
+    // 4. Default: User-configured target_engine if set, otherwise Pure HLSL (DirectX 11/12)
+    if let Ok(guard) = DEFAULT_CONTEXT.read() {
+        if let Some(ctx) = *guard {
+            return ctx;
+        }
+    }
+
     ShaderContext::PureHlsl
 }
 
@@ -3905,6 +3937,16 @@ fn main() {
                                     }
                                 }
                             }
+
+                            let engine_keys = ["target_engine", "targetEngine", "engine", "target_api", "targetApi"];
+                            for key in engine_keys {
+                                if let Some(s) = opts.get(key).and_then(|v| v.as_str()) {
+                                    if let Ok(mut g) = DEFAULT_CONTEXT.write() {
+                                        *g = parse_target_engine(s);
+                                    }
+                                    break;
+                                }
+                            }
                         }
                     }
 
@@ -3939,6 +3981,16 @@ fn main() {
                                     }
                                     break;
                                 }
+                            }
+                        }
+
+                        let engine_keys = ["target_engine", "targetEngine", "engine", "target_api", "targetApi"];
+                        for key in engine_keys {
+                            if let Some(s) = settings.get(key).and_then(|v| v.as_str()) {
+                                if let Ok(mut g) = DEFAULT_CONTEXT.write() {
+                                    *g = parse_target_engine(s);
+                                }
+                                break;
                             }
                         }
                     }
@@ -4179,5 +4231,21 @@ mod tests {
             verify_symbol(sym);
         }
     }
+
+    #[test]
+    fn test_detect_shader_context_directives() {
+        let unity_code = "// @target: unity\nfloat4 main() : SV_TARGET { return 1; }";
+        assert_eq!(detect_shader_context("file:///test.hlsl", unity_code), ShaderContext::UnityHlsl);
+
+        let unreal_code = "// @engine: unreal\nfloat4 main() : SV_TARGET { return 1; }";
+        assert_eq!(detect_shader_context("file:///test.hlsl", unreal_code), ShaderContext::UnrealEngine);
+
+        let pure_code = "// @target: pure\nfloat4 main() : SV_TARGET { return 1; }";
+        assert_eq!(detect_shader_context("file:///test.hlsl", pure_code), ShaderContext::PureHlsl);
+
+        let shaderlab_code = "// @target: shaderlab\nfloat4 main() : SV_TARGET { return 1; }";
+        assert_eq!(detect_shader_context("file:///test.hlsl", shaderlab_code), ShaderContext::UnityShaderLab);
+    }
 }
+
 
