@@ -76,35 +76,62 @@ Microsoft DirectXShaderCompiler (`dxc`) relies on DirectX and Windows/Linux LLVM
 ## Setup & Configuration
 
 ### Zed Settings (`settings.json`)
-You can specify custom binary paths or formatting preferences in your Zed settings:
+
+To configure HLSL & ShaderLab settings in Zed, open your `settings.json` (`Ctrl+,` or `Cmd+,` -> **Open Settings**):
 
 ```json
 {
   "languages": {
     "HLSL": {
-      "format_on_save": "on"
+      "tab_size": 4,                        // Indentation space width (e.g., 2, 4, 8)
+      "format_on_save": "on",               // Auto-format HLSL shader on save ("off" | "on")
+      "formatter": {
+        "language_server": {
+          "name": "hlsl_validator"          // Route formatting to hlsl_validator LSP
+        }
+      }
     },
     "ShaderLab": {
-      "format_on_save": "on"
+      "tab_size": 4,                        // Indentation space width (e.g., 2, 4, 8)
+      "format_on_save": "on",               // Auto-format ShaderLab file on save ("off" | "on")
+      "formatter": {
+        "language_server": {
+          "name": "hlsl_validator"          // Route formatting to hlsl_validator LSP
+        }
+      }
     }
   },
   "lsp": {
     "hlsl_validator": {
+      "binary": {
+        "path": ""                          // Custom path to hlsl_validator binary (empty for auto-download / PATH)
+      },
       "initialization_options": {
-        "dxc_path": "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\x64\\dxc.exe"
+        "dxc_path": "",                     // Custom path to Microsoft DXC dxc.exe / dxc (empty for auto-download / PATH)
+        "hlsl_validator_path": ""           // Alternative custom path to hlsl_validator
       }
     }
   }
 }
 ```
 
-### VS Code Settings (`settings.json`)
-You can customize binary paths in VS Code:
+### Visual Studio Code Settings (`settings.json`)
+
+To configure HLSL & ShaderLab settings in VS Code, open your User or Workspace `settings.json` (`Ctrl+Shift+P` -> `Preferences: Open User Settings (JSON)`):
 
 ```json
 {
-  "hlsl.validatorPath": "",
-  "hlsl.dxcPath": ""
+  "[hlsl]": {
+    "editor.tabSize": 4,                    // Indentation space width (e.g., 2, 4, 8)
+    "editor.formatOnSave": true             // Auto-format HLSL shader document on save (true | false)
+  },
+  "[shaderlab]": {
+    "editor.tabSize": 4,                    // Indentation space width (e.g., 2, 4, 8)
+    "editor.formatOnSave": true             // Auto-format ShaderLab document on save (true | false)
+  },
+  "hlslExtended.validatorPath": "",          // Custom executable path to hlsl_validator (empty for auto-download / PATH)
+  "hlslExtended.dxcPath": "",                // Custom executable path to Microsoft DXC dxc.exe / dxc (empty for auto-download / PATH)
+  "hlslExtended.trace.server": "off"         // Trace LSP communication in Output panel ("off" | "messages" | "verbose")
 }
 ```
 
