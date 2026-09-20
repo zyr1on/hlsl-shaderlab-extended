@@ -4126,4 +4126,58 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp2);
     }
+
+    #[test]
+    fn test_document_symbols_valid_ranges() {
+        let shader_code = r#"Shader "Custom/TestShader"
+{
+    Properties
+    {
+        _Color ("Main Color", Color) = (1,1,1,1)
+    }
+    SubShader
+    {
+        Pass
+        {
+            struct Attributes
+            {
+                float4 positionOS : POSITION;
+            };
+            float4 vert(Attributes input) : SV_POSITION
+            {
+                return input.positionOS;
+            }
+        }
+    }
+}"#;
+
+        let symbols = signature::get_document_symbols(shader_code);
+        let arr = symbols.as_array().expect("symbols must be an array");
+        assert!(!arr.is_empty(), "symbols should not be empty");
+
+        fn verify_symbol(sym: &serde_json::Value) {
+            let range = &sym["range"];
+            assert!(range["start"]["line"].is_u64(), "range.start.line missing");
+            assert!(range["start"]["character"].is_u64(), "range.start.character missing");
+            assert!(range["end"]["line"].is_u64(), "range.end.line missing");
+            assert!(range["end"]["character"].is_u64(), "range.end.character missing");
+
+            let sel_range = &sym["selectionRange"];
+            assert!(sel_range["start"]["line"].is_u64(), "selectionRange.start.line missing");
+            assert!(sel_range["start"]["character"].is_u64(), "selectionRange.start.character missing");
+            assert!(sel_range["end"]["line"].is_u64(), "selectionRange.end.line missing in {:?}", sym["name"]);
+            assert!(sel_range["end"]["character"].is_u64(), "selectionRange.end.character missing in {:?}", sym["name"]);
+
+            if let Some(children) = sym["children"].as_array() {
+                for child in children {
+                    verify_symbol(child);
+                }
+            }
+        }
+
+        for sym in arr {
+            verify_symbol(sym);
+        }
+    }
 }
+

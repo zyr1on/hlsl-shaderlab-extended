@@ -1819,13 +1819,14 @@ pub fn get_document_symbols(text: &str) -> Value {
                 }
             }));
         } else if trimmed.starts_with("SubShader") {
+            let end_line = (line_idx + 1).min(lines.len().saturating_sub(1));
             symbols.push(json!({
                 "name": "SubShader",
                 "detail": "ShaderLab SubShader",
                 "kind": 5, // Class
                 "range": {
                     "start": { "line": line_idx, "character": 0 },
-                    "end": { "line": line_idx + 1, "character": 0 }
+                    "end": { "line": end_line, "character": lines.get(end_line).map(|l| l.len()).unwrap_or(0) }
                 },
                 "selectionRange": {
                     "start": { "line": line_idx, "character": 0 },
@@ -1833,16 +1834,18 @@ pub fn get_document_symbols(text: &str) -> Value {
                 }
             }));
         } else if trimmed.starts_with("Pass") {
+            let end_line = (line_idx + 1).min(lines.len().saturating_sub(1));
             symbols.push(json!({
                 "name": "Pass",
                 "detail": "ShaderLab Pass",
                 "kind": 6, // Method
                 "range": {
                     "start": { "line": line_idx, "character": 0 },
-                    "end": { "line": line_idx + 1, "character": 0 }
+                    "end": { "line": end_line, "character": lines.get(end_line).map(|l| l.len()).unwrap_or(0) }
                 },
                 "selectionRange": {
                     "start": { "line": line_idx, "character": 0 },
+                    "end": { "line": line_idx, "character": line.len() }
                 }
             }));
         }
