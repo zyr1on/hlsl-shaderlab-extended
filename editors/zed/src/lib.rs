@@ -300,7 +300,7 @@ impl HlslShaderlabExtension {
             }
         }
 
-        // 5) Download pre-built binary from zyr1on/zed-hlsl_shaderlab-extended GitHub Releases
+        // 5) Download pre-built binary from zyr1on/hlsl-shaderlab-extended GitHub Releases
         let is_windows = matches!(platform, zed::Os::Windows);
         let ext = if is_windows { "zip" } else { "tar.gz" };
         let file_type = if is_windows {
@@ -324,7 +324,7 @@ impl HlslShaderlabExtension {
         );
 
         if let Ok(release) = zed::latest_github_release(
-            "zyr1on/zed-hlsl_shaderlab-extended",
+            "zyr1on/hlsl-shaderlab-extended",
             zed::GithubReleaseOptions {
                 require_assets: true,
                 pre_release: false,
@@ -351,7 +351,7 @@ impl HlslShaderlabExtension {
                     &zed::LanguageServerInstallationStatus::Downloading,
                 );
                 zed::download_file(&asset.download_url, &version_dir, file_type)
-                    .map_err(|e| format!("Failed to download hlsl_validator from zyr1on/zed-hlsl_shaderlab-extended: {e}"))?;
+                    .map_err(|e| format!("Failed to download hlsl_validator from zyr1on/hlsl-shaderlab-extended: {e}"))?;
 
                 locate_validator(&version_dir, &binary_name)
                     .ok_or_else(|| format!("hlsl_validator binary not found in '{version_dir}'"))?

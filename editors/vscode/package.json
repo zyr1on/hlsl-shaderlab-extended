@@ -2,7 +2,7 @@
   "name": "vscode-hlsl-shaderlab-extended",
   "displayName": "HLSL & ShaderLab Extended",
   "description": "High-performance HLSL and Unity ShaderLab Language Server and syntax support powered by Microsoft DXC.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "zyr1on",
   "author": {
     "name": "Semih Ozdemir",
@@ -11,7 +11,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zyr1on/zed-hlsl_shaderlab-extended"
+    "url": "https://github.com/zyr1on/hlsl-shaderlab-extended"
   },
   "engines": {
     "vscode": "^1.85.0"

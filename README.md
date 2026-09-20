@@ -6,13 +6,13 @@ Powered by a lightweight Rust LSP server (`hlsl_validator`) and the **Microsoft 
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Zed Extension API](https://img.shields.io/badge/Zed%20Extension%20API-v0.7.0-blue)](https://crates.io/crates/zed_extension_api)
-[![Release](https://img.shields.io/github/v/release/zyr1on/zed-hlsl_shaderlab-extended?color=green)](https://github.com/zyr1on/zed-hlsl_shaderlab-extended/releases)
+[![Release](https://img.shields.io/github/v/release/zyr1on/hlsl-shaderlab-extended?color=green)](https://github.com/zyr1on/hlsl-shaderlab-extended/releases)
 
 ---
 
 > [!TIP]
 > ### 📦 Quick Install: Zed Editor
-> 1. Download **`zed-hlsl_shaderlab-general-release.zip`** from [Latest Releases](https://github.com/zyr1on/zed-hlsl_shaderlab-extended/releases) and extract it anywhere on your computer.
+> 1. Download **`zed-hlsl_shaderlab-general-release.zip`** from [Latest Releases](https://github.com/zyr1on/hlsl-shaderlab-extended/releases) and extract it anywhere on your computer.
 > 2. Open Zed and open the Extensions panel (`Ctrl+Shift+X` on Windows/Linux, `Cmd+Shift+X` on macOS).
 > 3. Click **"Install Dev Extension"** at the top right and select the extracted folder.
 > 
@@ -20,7 +20,7 @@ Powered by a lightweight Rust LSP server (`hlsl_validator`) and the **Microsoft 
 
 > [!TIP]
 > ### 📦 Quick Install: Visual Studio Code
-> 1. Download **`vscode-hlsl_shaderlab-general-release.vsix`** from [Latest Releases](https://github.com/zyr1on/zed-hlsl_shaderlab-extended/releases).
+> 1. Download **`vscode-hlsl_shaderlab-general-release.vsix`** from [Latest Releases](https://github.com/zyr1on/hlsl-shaderlab-extended/releases).
 > 2. In VS Code, open Extensions (`Ctrl+Shift+X` / `Cmd+Shift+X`), click the **`...`** (Views and More Actions) menu at the top of the Extensions panel, and select **"Install from VSIX..."**.
 > 3. Select the downloaded `vscode-hlsl_shaderlab-general-release.vsix` file.
 > 

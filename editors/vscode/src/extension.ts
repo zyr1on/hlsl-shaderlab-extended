@@ -242,7 +242,7 @@ async function downloadHlslValidator(
         async (progress) => {
             progress.report({ message: 'Checking GitHub releases...' });
 
-            const releaseUrl = 'https://api.github.com/repos/zyr1on/zed-hlsl_shaderlab-extended/releases/latest';
+            const releaseUrl = 'https://api.github.com/repos/zyr1on/hlsl-shaderlab-extended/releases/latest';
             const releaseData = await httpGetJson(releaseUrl);
 
             const asset = releaseData.assets?.find((a: any) => a.name === assetName);

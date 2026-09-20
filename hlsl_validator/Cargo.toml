@@ -1,10 +1,11 @@
 [package]
 name = "hlsl_validator"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Semih Ozdemir <semihozdmirr@gmail.com>"]
 description = "Lightweight HLSL & Unity ShaderLab Language Server powered by Microsoft DXC"
 license = "MIT"
+repository = "https://github.com/zyr1on/hlsl-shaderlab-extended"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
